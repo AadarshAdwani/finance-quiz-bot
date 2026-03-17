@@ -1,0 +1,31 @@
+INVESTMENT REPORT 2024 - GLOBAL EQUITY MARKETS
+
+1. MARKET OVERVIEW
+Global equity markets showed strong resilience in 2024. The S&P 500 index 
+gained 18% year-to-date, driven by technology and healthcare sectors. 
+Emerging markets underperformed developed markets by approximately 7%.
+
+2. ASSET ALLOCATION STRATEGY
+A balanced portfolio should maintain 60% equities, 30% fixed income, and 
+10% alternative assets. During high inflation periods, real assets such as 
+REITs and commodities provide effective hedging.
+
+3. RISK ANALYSIS
+Market volatility as measured by VIX remained elevated at 22 points. 
+Beta of a portfolio measures sensitivity to market movements. A beta 
+greater than 1 indicates higher volatility than the market. Sharpe ratio 
+above 1.0 is considered good, above 2.0 is very good.
+
+4. SECTOR PERFORMANCE
+Technology sector returned 24%, Healthcare 15%, Energy 9%, Financials 11%.
+Consumer Discretionary underperformed at 4% due to reduced consumer spending.
+
+5. FIXED INCOME OUTLOOK
+The Federal Reserve held interest rates at 5.25%-5.50%. Bond prices move 
+inversely to interest rates. Duration risk is critical when rates are rising.
+Investment grade bonds yielded 5.2% on average.
+
+6. INVESTMENT RISKS
+Key risks include geopolitical tensions, inflation persistence, and credit 
+risk. Diversification across asset classes reduces unsystematic risk. 
+Systematic risk or market risk cannot be eliminated through diversification.

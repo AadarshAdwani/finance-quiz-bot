@@ -1,0 +1,24 @@
+# Virtual Environment
+venv/
+
+# Environment Variables (NEVER upload this!)
+.env
+
+# ChromaDB (too large)
+chroma_db/
+
+# Uploaded PDFs
+uploads/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# VS Code
+.vscode/
+
+# Windows
+Thumbs.db
+desktop.ini
