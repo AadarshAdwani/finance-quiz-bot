@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>FinanceIQ — Dashboard</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"/>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+</head>
+<body>
+
+  <!-- ── NAVBAR ─────────────────────────────────────────────────────── -->
+  <nav class="navbar">
+    <div class="nav-brand">
+      <span class="nav-icon">📊</span>
+      <span class="nav-title">FinanceIQ</span>
+    </div>
+    <div class="nav-right">
+      <span class="nav-user">👤 {{ username }}</span>
+      <a href="/logout" class="nav-logout">Sign Out</a>
+    </div>
+  </nav>
+
+  <!-- ── MAIN ───────────────────────────────────────────────────────── -->
+  <main class="main-wrapper">
+
+    <!-- Welcome Banner -->
+    <div class="dash-banner">
+      <div class="dash-banner-text">
+        <h1 class="dash-welcome">Welcome back, <span class="accent">{{ username }}</span>! 👋</h1>
+        <p class="dash-subtitle">
+          Ready to test your finance knowledge? Upload an Investment
+          Report PDF and let AI generate your personalised quiz.
+        </p>
+      </div>
+      <div class="dash-banner-icon">📊</div>
+    </div>
+
+    <!-- Stats Row -->
+    <div class="dash-stats">
+      <div class="dash-stat-card">
+        <span class="dsc-icon">📄</span>
+        <div class="dsc-info">
+          <span class="dsc-label">How it works</span>
+          <span class="dsc-value">Upload PDF</span>
+        </div>
+      </div>
+      <div class="dash-stat-card">
+        <span class="dsc-icon">🤖</span>
+        <div class="dsc-info">
+          <span class="dsc-label">Powered by</span>
+          <span class="dsc-value">Groq LLaMA 3.1</span>
+        </div>
+      </div>
+      <div class="dash-stat-card">
+        <span class="dsc-icon">🎯</span>
+        <div class="dsc-info">
+          <span class="dsc-label">Quiz type</span>
+          <span class="dsc-value">Custom MCQ</span>
+        </div>
+      </div>
+      <div class="dash-stat-card">
+        <span class="dsc-icon">💡</span>
+        <div class="dsc-info">
+          <span class="dsc-label">Feedback</span>
+          <span class="dsc-value">AI Explanations</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Start Quiz Card -->
+    <div class="dash-quiz-card">
+      <div class="dqc-left">
+        <div class="dqc-badge">Finance Domain Only</div>
+        <h2 class="dqc-title">Start a New Quiz</h2>
+        <p class="dqc-desc">
+          Upload any Investment Report, Financial Statement, or Economics
+          PDF. Our AI will validate the document, extract key concepts,
+          and generate a personalised quiz just for you.
+        </p>
+        <div class="dqc-steps">
+          <div class="dqc-step">
+            <span class="step-num">1</span>
+            <span>Upload a Finance PDF</span>
+          </div>
+          <div class="dqc-step">
+            <span class="step-num">2</span>
+            <span>Choose number of questions</span>
+          </div>
+          <div class="dqc-step">
+            <span class="step-num">3</span>
+            <span>Answer & get AI explanations</span>
+          </div>
+          <div class="dqc-step">
+            <span class="step-num">4</span>
+            <span>Review your performance chart</span>
+          </div>
+        </div>
+        <a href="/quiz" class="btn-primary">Begin Assessment →</a>
+      </div>
+      <div class="dqc-right">
+        <div class="dqc-info-box">
+          <h3>📌 Accepted Documents</h3>
+          <ul class="dqc-list">
+            <li>✅ Investment Reports</li>
+            <li>✅ Financial Statements</li>
+            <li>✅ Economics Reports</li>
+            <li>✅ Annual Reports</li>
+            <li>✅ Market Analysis PDFs</li>
+            <li>✅ Budget Reports</li>
+            <li>❌ Sports / Entertainment</li>
+            <li>❌ Medical / Science docs</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tech Stack -->
+    <div class="dash-tech">
+      <h3 class="dash-tech-title">Powered By</h3>
+      <div class="dash-tech-grid">
+        <div class="tech-pill">🤖 Groq API</div>
+        <div class="tech-pill">🦙 LLaMA 3.1</div>
+        <div class="tech-pill">🗄️ ChromaDB</div>
+        <div class="tech-pill">🤗 HuggingFace</div>
+        <div class="tech-pill">🐍 Flask</div>
+        <div class="tech-pill">📊 Chart.js</div>
+      </div>
+    </div>
+
+  </main>
+
+</body>
+</html>

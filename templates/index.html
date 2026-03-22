@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>FinanceIQ — Quiz & Tutor Bot</title>
+  <title>FinanceIQ — Quiz</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"/>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -16,54 +16,24 @@
       <span class="nav-icon">📊</span>
       <span class="nav-title">FinanceIQ</span>
     </div>
-    <div class="nav-badge" id="nav-badge">AI-Powered Quiz</div>
+    <div class="nav-right">
+      <span class="nav-badge" id="nav-badge">Finance Quiz</span>
+      <a href="/dashboard" class="nav-back">← Dashboard</a>
+      <a href="/logout" class="nav-logout">Sign Out</a>
+    </div>
   </nav>
 
-  <!-- ── MAIN WRAPPER ───────────────────────────────────────────────── -->
   <main class="main-wrapper">
 
-    <!-- ── WELCOME SCREEN ─────────────────────────────────────────── -->
-    <section id="welcome-screen" class="screen active">
-      <div class="welcome-card">
-        <div class="welcome-badge">AI-Powered Learning</div>
-        <h1 class="welcome-title">Finance Quiz<br/><span class="accent">& Tutor Bot</span></h1>
-        <p class="welcome-desc">
-          Upload any Investment Report PDF and get an instant
-          AI-generated quiz with personalized explanations.
-        </p>
-
-        <div class="welcome-stats">
-          <div class="stat">
-            <span class="stat-number">PDF</span>
-            <span class="stat-label">Upload</span>
-          </div>
-          <div class="stat-divider"></div>
-          <div class="stat">
-            <span class="stat-number">AI</span>
-            <span class="stat-label">Questions</span>
-          </div>
-          <div class="stat-divider"></div>
-          <div class="stat">
-            <span class="stat-number">LLM</span>
-            <span class="stat-label">Feedback</span>
-          </div>
-        </div>
-
-        <button class="btn-primary" onclick="showScreen('upload-screen')">
-          Get Started →
-        </button>
-        <p class="welcome-note">Powered by Groq · LLaMA 3 · ChromaDB</p>
-      </div>
-    </section>
-
     <!-- ── UPLOAD SCREEN ───────────────────────────────────────────── -->
-    <section id="upload-screen" class="screen">
+    <section id="upload-screen" class="screen active">
       <div class="upload-card">
 
         <div class="upload-header">
           <h2 class="upload-title">Upload Investment Report</h2>
           <p class="upload-subtitle">
-            Upload a PDF and our AI will generate a personalized quiz from its content.
+            Upload a Finance PDF and our AI will generate a
+            personalised quiz from its content.
           </p>
         </div>
 
@@ -76,7 +46,7 @@
           <div class="drop-icon">📄</div>
           <p class="drop-title">Drop your PDF here</p>
           <p class="drop-subtitle">or click to browse files</p>
-          <span class="drop-hint">Supports: PDF files only · Max 20MB</span>
+          <span class="drop-hint">Finance PDFs only · Max 20MB</span>
           <input type="file" id="pdf-input" accept=".pdf"
                  style="display:none" onchange="handleFileSelect(event)"/>
         </div>
@@ -93,12 +63,31 @@
           </div>
         </div>
 
+        <!-- Question Count Selector -->
+        <div class="question-count-wrap" id="question-count-wrap" style="display:none;">
+          <label class="qc-label">
+            🎯 How many questions do you want?
+          </label>
+          <div class="qc-options">
+            <button class="qc-btn active" onclick="setQuestionCount(this, 4)">4</button>
+            <button class="qc-btn"        onclick="setQuestionCount(this, 6)">6</button>
+            <button class="qc-btn"        onclick="setQuestionCount(this, 8)">8</button>
+            <button class="qc-btn"        onclick="setQuestionCount(this, 10)">10</button>
+            <button class="qc-btn"        onclick="setQuestionCount(this, 15)">15</button>
+          </div>
+          <p class="qc-hint">Selected: <span id="qc-selected">4</span> questions</p>
+        </div>
+
         <!-- Upload Progress -->
         <div class="upload-progress" id="upload-progress" style="display:none;">
           <div class="upload-steps">
             <div class="upload-step" id="step-extract">
               <span class="step-dot"></span>
               <span class="step-text">Extracting PDF text...</span>
+            </div>
+            <div class="upload-step" id="step-validate">
+              <span class="step-dot"></span>
+              <span class="step-text">Validating finance content...</span>
             </div>
             <div class="upload-step" id="step-embed">
               <span class="step-dot"></span>
@@ -111,7 +100,7 @@
           </div>
         </div>
 
-        <!-- Error Message -->
+        <!-- Error -->
         <div class="upload-error" id="upload-error" style="display:none;">
           <span>⚠️ </span><span id="error-text"></span>
         </div>
@@ -128,7 +117,6 @@
     <!-- ── QUIZ SCREEN ─────────────────────────────────────────────── -->
     <section id="quiz-screen" class="screen">
 
-      <!-- Progress Header -->
       <div class="quiz-header">
         <div class="progress-info">
           <span id="question-counter">Question 1 of 6</span>
@@ -139,14 +127,12 @@
         </div>
       </div>
 
-      <!-- Question Card -->
       <div class="question-card" id="question-card">
         <div class="question-topic" id="question-topic">Topic</div>
-        <h2 class="question-text" id="question-text">Loading question...</h2>
+        <h2 class="question-text" id="question-text">Loading...</h2>
         <div class="options-grid" id="options-grid"></div>
       </div>
 
-      <!-- Explanation Panel -->
       <div class="explanation-panel" id="explanation-panel">
         <div class="explanation-header">
           <span id="result-badge" class="result-badge"></span>
@@ -169,7 +155,6 @@
     <section id="results-screen" class="screen">
       <div class="results-card">
 
-        <!-- Score Hero -->
         <div class="score-hero">
           <div class="score-circle">
             <svg viewBox="0 0 120 120" class="score-ring">
@@ -190,7 +175,6 @@
           </div>
         </div>
 
-        <!-- Chart -->
         <div class="chart-section">
           <h3 class="chart-title">Performance by Topic</h3>
           <div class="chart-wrap">
@@ -198,13 +182,11 @@
           </div>
         </div>
 
-        <!-- Wrong Topics -->
         <div class="topics-section" id="topics-section" style="display:none;">
           <h3 class="topics-title">📌 Topics to Review</h3>
           <div class="topics-list" id="topics-list"></div>
         </div>
 
-        <!-- Actions -->
         <div class="results-actions">
           <button class="btn-secondary" onclick="uploadNewPDF()">
             Upload New PDF

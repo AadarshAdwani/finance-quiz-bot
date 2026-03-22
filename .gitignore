@@ -16,9 +16,23 @@ __pycache__/
 *.pyo
 *.pyd
 
+# SQLite Database (contains user data)
+finance_quiz.db
+
 # VS Code
 .vscode/
 
 # Windows
 Thumbs.db
 desktop.ini
+
+# Mac
+.DS_Store
+
+# Logs
+*.log
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/

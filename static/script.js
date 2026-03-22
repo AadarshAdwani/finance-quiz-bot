@@ -1,10 +1,11 @@
 // ── State ──────────────────────────────────────────────────────────────────
-let questions    = [];
-let currentIndex = 0;
-let score        = 0;
-let wrongTopics  = [];
-let answered     = false;
-let selectedFile = null;
+let questions     = [];
+let currentIndex  = 0;
+let score         = 0;
+let wrongTopics   = [];
+let answered      = false;
+let selectedFile  = null;
+let numQuestions  = 4;
 
 // ── Screen Helper ──────────────────────────────────────────────────────────
 function showScreen(id) {
@@ -12,16 +13,22 @@ function showScreen(id) {
   document.getElementById(id).classList.add('active');
 }
 
-// ── Drag & Drop Handlers ───────────────────────────────────────────────────
+// ── Question Count Selector ────────────────────────────────────────────────
+function setQuestionCount(btn, count) {
+  document.querySelectorAll('.qc-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  numQuestions = count;
+  document.getElementById('qc-selected').textContent = count;
+}
+
+// ── Drag & Drop ────────────────────────────────────────────────────────────
 function handleDragOver(e) {
   e.preventDefault();
   document.getElementById('drop-zone').classList.add('dragover');
 }
-
 function handleDragLeave(e) {
   document.getElementById('drop-zone').classList.remove('dragover');
 }
-
 function handleDrop(e) {
   e.preventDefault();
   document.getElementById('drop-zone').classList.remove('dragover');
@@ -29,69 +36,65 @@ function handleDrop(e) {
   if (file) processFile(file);
 }
 
-// ── File Select Handler ────────────────────────────────────────────────────
+// ── File Select ────────────────────────────────────────────────────────────
 function handleFileSelect(e) {
   const file = e.target.files[0];
   if (file) processFile(file);
 }
 
-// ── Process Selected File ──────────────────────────────────────────────────
+// ── Process File ───────────────────────────────────────────────────────────
 function processFile(file) {
-  // Validate file type
   if (!file.name.endsWith('.pdf')) {
-    showError('Only PDF files are allowed. Please select a PDF file.');
+    showError('Only PDF files are allowed. Please select a PDF.');
     return;
   }
-
-  // Validate file size (20MB max)
   if (file.size > 20 * 1024 * 1024) {
-    showError('File is too large. Maximum size is 20MB.');
+    showError('File too large. Maximum size is 20MB.');
     return;
   }
-
   selectedFile = file;
   hideError();
 
   // Show file preview
-  document.getElementById('file-name').textContent = file.name;
-  document.getElementById('file-size').textContent = formatFileSize(file.size);
-  document.getElementById('file-preview').style.display = 'block';
-  document.getElementById('upload-btn').style.display   = 'block';
-  document.getElementById('drop-zone').style.display    = 'none';
+  document.getElementById('file-name').textContent  = file.name;
+  document.getElementById('file-size').textContent  = formatSize(file.size);
+  document.getElementById('file-preview').style.display        = 'block';
+  document.getElementById('question-count-wrap').style.display = 'block';
+  document.getElementById('upload-btn').style.display          = 'block';
+  document.getElementById('drop-zone').style.display           = 'none';
 }
 
 // ── Remove File ────────────────────────────────────────────────────────────
 function removeFile() {
   selectedFile = null;
-  document.getElementById('file-preview').style.display = 'none';
-  document.getElementById('upload-btn').style.display   = 'none';
-  document.getElementById('drop-zone').style.display    = 'block';
-  document.getElementById('pdf-input').value            = '';
+  document.getElementById('file-preview').style.display        = 'none';
+  document.getElementById('question-count-wrap').style.display = 'none';
+  document.getElementById('upload-btn').style.display          = 'none';
+  document.getElementById('drop-zone').style.display           = 'block';
+  document.getElementById('pdf-input').value                   = '';
   hideError();
 }
 
-// ── Format File Size ───────────────────────────────────────────────────────
-function formatFileSize(bytes) {
+// ── Helpers ────────────────────────────────────────────────────────────────
+function formatSize(bytes) {
   if (bytes < 1024)        return bytes + ' B';
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
-
-// ── Show / Hide Error ──────────────────────────────────────────────────────
 function showError(msg) {
-  const el = document.getElementById('upload-error');
-  document.getElementById('error-text').textContent = msg;
-  el.style.display = 'block';
+  document.getElementById('error-text').textContent  = msg;
+  document.getElementById('upload-error').style.display = 'block';
 }
-
 function hideError() {
   document.getElementById('upload-error').style.display = 'none';
 }
+function delay(ms) {
+  return new Promise(res => setTimeout(res, ms));
+}
 
-// ── Animate Upload Steps ───────────────────────────────────────────────────
-function setStep(stepId, state) {
-  // state: 'active' | 'done' | ''
-  const el = document.getElementById(stepId);
+// ── Step Animator ──────────────────────────────────────────────────────────
+function setStep(id, state) {
+  const el = document.getElementById(id);
   el.classList.remove('active', 'done');
   if (state) el.classList.add(state);
 }
@@ -100,66 +103,58 @@ function setStep(stepId, state) {
 async function uploadPDF() {
   if (!selectedFile) return;
 
-  // Hide controls, show progress
-  document.getElementById('upload-btn').disabled          = true;
-  document.getElementById('upload-btn').textContent       = 'Processing...';
+  // Disable button & show progress
+  const btn = document.getElementById('upload-btn');
+  btn.disabled    = true;
+  btn.textContent = 'Processing...';
   document.getElementById('upload-progress').style.display = 'block';
   hideError();
 
   // Animate steps
   setStep('step-extract',  'active');
+  setStep('step-validate', '');
   setStep('step-embed',    '');
   setStep('step-generate', '');
 
   const formData = new FormData();
-  formData.append('file', selectedFile);
+  formData.append('file',          selectedFile);
+  formData.append('num_questions', numQuestions);
 
   try {
-    // Step 1 active — extract
-    await delay(600);
-    setStep('step-extract', 'done');
-    setStep('step-embed',   'active');
+    await delay(500);
+    setStep('step-extract',  'done');
+    setStep('step-validate', 'active');
 
-    // Step 2 active — embed
     await delay(400);
+    setStep('step-validate', 'done');
+    setStep('step-embed',    'active');
+
+    await delay(300);
     setStep('step-embed',    'done');
     setStep('step-generate', 'active');
 
-    // Make API call
-    const res  = await fetch('/api/upload', {
-      method: 'POST',
-      body:   formData
-    });
+    const res  = await fetch('/api/upload', { method: 'POST', body: formData });
     const data = await res.json();
 
-    if (!res.ok) {
-      throw new Error(data.error || 'Upload failed');
-    }
+    if (!res.ok) throw new Error(data.error || 'Upload failed');
 
-    // Step 3 done
     setStep('step-generate', 'done');
-    await delay(500);
+    await delay(400);
 
     // Update navbar badge
     document.getElementById('nav-badge').textContent = selectedFile.name;
 
-    // Start quiz
     await startQuiz();
 
   } catch (err) {
-    setStep('step-extract',  '');
-    setStep('step-embed',    '');
-    setStep('step-generate', '');
+    // Reset progress
+    ['step-extract','step-validate','step-embed','step-generate']
+      .forEach(s => setStep(s, ''));
     document.getElementById('upload-progress').style.display = 'none';
-    document.getElementById('upload-btn').disabled           = false;
-    document.getElementById('upload-btn').textContent        = 'Analyse & Generate Quiz →';
+    btn.disabled    = false;
+    btn.textContent = 'Analyse & Generate Quiz →';
     showError(err.message || 'Something went wrong. Please try again.');
   }
-}
-
-// ── Delay Helper ───────────────────────────────────────────────────────────
-function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 // ── Start Quiz ─────────────────────────────────────────────────────────────
@@ -167,7 +162,6 @@ async function startQuiz() {
   try {
     const res  = await fetch('/api/questions');
     const data = await res.json();
-
     if (!res.ok) throw new Error(data.error || 'Could not load questions');
 
     questions    = data.questions;
@@ -177,7 +171,6 @@ async function startQuiz() {
 
     showScreen('quiz-screen');
     renderQuestion();
-
   } catch (err) {
     showError(err.message);
   }
@@ -185,22 +178,19 @@ async function startQuiz() {
 
 // ── Render Question ────────────────────────────────────────────────────────
 function renderQuestion() {
-  answered = false;
-  const q  = questions[currentIndex];
+  answered    = false;
+  const q     = questions[currentIndex];
+  const pct   = (currentIndex / questions.length) * 100;
 
-  // Progress bar
-  const pct = (currentIndex / questions.length) * 100;
   document.getElementById('progress-fill').style.width    = pct + '%';
   document.getElementById('question-counter').textContent =
     `Question ${currentIndex + 1} of ${questions.length}`;
   document.getElementById('score-live').textContent = `Score: ${score}`;
-
-  // Topic & question
-  document.getElementById('question-topic').textContent =
+  document.getElementById('question-topic').textContent   =
     q.topic.replace(/\b\w/g, c => c.toUpperCase());
-  document.getElementById('question-text').textContent = q.question;
+  document.getElementById('question-text').textContent    = q.question;
 
-  // Options
+  // Build options
   const grid = document.getElementById('options-grid');
   grid.innerHTML = '';
   q.options.forEach(opt => {
@@ -211,9 +201,8 @@ function renderQuestion() {
     grid.appendChild(btn);
   });
 
-  // Hide explanation panel
-  const panel = document.getElementById('explanation-panel');
-  panel.classList.remove('visible');
+  // Hide explanation
+  document.getElementById('explanation-panel').classList.remove('visible');
   document.getElementById('next-btn').style.display    = 'none';
   document.getElementById('explanation-body').innerHTML =
     '<div class="loading-dots"><span></span><span></span><span></span></div>';
@@ -224,12 +213,8 @@ async function selectAnswer(letter, clickedBtn) {
   if (answered) return;
   answered = true;
 
-  // Disable all buttons
   document.querySelectorAll('.option-btn').forEach(b => b.disabled = true);
-
-  // Show explanation panel with loading dots
-  const panel = document.getElementById('explanation-panel');
-  panel.classList.add('visible');
+  document.getElementById('explanation-panel').classList.add('visible');
 
   try {
     const res  = await fetch('/api/submit', {
@@ -242,12 +227,12 @@ async function selectAnswer(letter, clickedBtn) {
     });
     const data = await res.json();
 
-    // Highlight correct / wrong options
-    const correctLetter = data.correct_answer;
+    // Highlight options
     document.querySelectorAll('.option-btn').forEach(btn => {
-      const btnLetter = btn.textContent[0];
-      if (btnLetter === correctLetter) btn.classList.add('correct');
-      else if (btn === clickedBtn)     btn.classList.add('wrong');
+      if (btn.textContent[0] === data.correct_answer)
+        btn.classList.add('correct');
+      else if (btn === clickedBtn)
+        btn.classList.add('wrong');
     });
 
     // Update score
@@ -258,16 +243,14 @@ async function selectAnswer(letter, clickedBtn) {
       wrongTopics.push(data.topic);
     }
 
-    // Result badge
+    // Badge
     const badge     = document.getElementById('result-badge');
     badge.textContent = data.is_correct ? '✅ Correct!' : '❌ Incorrect';
     badge.className   = 'result-badge ' +
       (data.is_correct ? 'correct-badge' : 'wrong-badge');
 
-    // Explanation text
     document.getElementById('explanation-body').textContent = data.explanation;
 
-    // Next button
     const nextBtn         = document.getElementById('next-btn');
     nextBtn.style.display = 'block';
     nextBtn.textContent   =
@@ -306,7 +289,7 @@ async function showResults() {
 
     showScreen('results-screen');
 
-    // Animate score ring
+    // Animate ring
     const offset = 314 - (314 * data.percentage / 100);
     setTimeout(() => {
       document.getElementById('ring-fill').style.strokeDashoffset = offset;
@@ -317,11 +300,9 @@ async function showResults() {
     document.getElementById('grade-message').textContent  = data.message;
     document.getElementById('score-fraction').textContent =
       `${data.score}/${data.total}`;
+    document.getElementById('progress-fill').style.width  = '100%';
 
-    // Progress bar to 100%
-    document.getElementById('progress-fill').style.width = '100%';
-
-    // Wrong topics tags
+    // Wrong topics
     const topicsSection = document.getElementById('topics-section');
     if (data.wrong_topics.length > 0) {
       topicsSection.style.display = 'block';
@@ -333,7 +314,6 @@ async function showResults() {
       topicsSection.style.display = 'none';
     }
 
-    // Build chart
     buildChart();
 
   } catch (err) {
@@ -343,31 +323,24 @@ async function showResults() {
 
 // ── Build Results Chart ────────────────────────────────────────────────────
 function buildChart() {
-  // Destroy existing chart if any
   const canvas = document.getElementById('resultsChart');
   const old    = Chart.getChart(canvas);
   if (old) old.destroy();
 
-  // Build topic map
   const topicMap = {};
   questions.forEach(q => { topicMap[q.topic] = 0; });
-  wrongTopics.forEach(t => {
-    if (t in topicMap) topicMap[t]++;
-  });
+  wrongTopics.forEach(t => { if (t in topicMap) topicMap[t]++; });
 
   const labels  = Object.keys(topicMap)
     .map(t => t.replace(/\b\w/g, c => c.toUpperCase()));
-
   const wrongs  = Object.values(topicMap);
   const correct = wrongs.map((w, i) => {
-    const total = questions.filter(
-      q => q.topic === Object.keys(topicMap)[i]
-    ).length;
+    const total = questions
+      .filter(q => q.topic === Object.keys(topicMap)[i]).length;
     return total - w;
   });
 
-  const ctx = canvas.getContext('2d');
-  new Chart(ctx, {
+  new Chart(canvas.getContext('2d'), {
     type: 'bar',
     data: {
       labels,
@@ -423,9 +396,13 @@ function buildChart() {
   });
 }
 
-// ── Restart Quiz (same PDF) ────────────────────────────────────────────────
+// ── Restart (same PDF) ─────────────────────────────────────────────────────
 function restartQuiz() {
-  document.getElementById('topics-section').style.display  = 'none';
+  const canvas = document.getElementById('resultsChart');
+  const old    = Chart.getChart(canvas);
+  if (old) old.destroy();
+
+  document.getElementById('topics-section').style.display     = 'none';
   document.getElementById('ring-fill').style.strokeDashoffset = 314;
   currentIndex = 0;
   score        = 0;
@@ -436,18 +413,22 @@ function restartQuiz() {
 
 // ── Upload New PDF ─────────────────────────────────────────────────────────
 function uploadNewPDF() {
-  // Reset everything
   selectedFile = null;
-  document.getElementById('file-preview').style.display    = 'none';
-  document.getElementById('upload-btn').style.display      = 'none';
-  document.getElementById('upload-btn').disabled           = false;
-  document.getElementById('upload-btn').textContent        = 'Analyse & Generate Quiz →';
-  document.getElementById('drop-zone').style.display       = 'block';
-  document.getElementById('upload-progress').style.display = 'none';
-  document.getElementById('pdf-input').value               = '';
-  document.getElementById('topics-section').style.display  = 'none';
-  document.getElementById('ring-fill').style.strokeDashoffset = 314;
-  document.getElementById('nav-badge').textContent         = 'AI-Powered Quiz';
+  const canvas = document.getElementById('resultsChart');
+  const old    = Chart.getChart(canvas);
+  if (old) old.destroy();
+
+  document.getElementById('file-preview').style.display        = 'none';
+  document.getElementById('question-count-wrap').style.display = 'none';
+  document.getElementById('upload-btn').style.display          = 'none';
+  document.getElementById('upload-btn').disabled               = false;
+  document.getElementById('upload-btn').textContent            = 'Analyse & Generate Quiz →';
+  document.getElementById('drop-zone').style.display           = 'block';
+  document.getElementById('upload-progress').style.display     = 'none';
+  document.getElementById('pdf-input').value                   = '';
+  document.getElementById('topics-section').style.display      = 'none';
+  document.getElementById('ring-fill').style.strokeDashoffset  = 314;
+  document.getElementById('nav-badge').textContent             = 'Finance Quiz';
   hideError();
   showScreen('upload-screen');
 }
