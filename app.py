@@ -1,4 +1,7 @@
-from flask import Flask, jsonify, request, render_template, redirect, url_for, flash
+from flask import (
+    Flask, jsonify, request, render_template, redirect, url_for,
+    flash, session, send_file,
+)
 from flask_cors import CORS
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -11,6 +14,18 @@ import fitz
 import json
 import re
 import sqlite3
+import uuid
+import secrets
+import time
+import requests
+import jwt
+from io import BytesIO
+from urllib.parse import urlencode
+from google.oauth2 import id_token as google_id_token
+from google.auth.transport import requests as google_requests
+from google_auth_oauthlib.flow import Flow
+from jwt import PyJWKClient
+from fpdf import FPDF
 
 load_dotenv()
 
@@ -21,78 +36,495 @@ CORS(app)
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# ── Flask-Login Setup ──────────────────────────────────────────────────────
+# ── OAuth (optional — set env vars to enable buttons) ─────────────────────
+GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
+APPLE_CLIENT_ID      = os.getenv("APPLE_CLIENT_ID", "").strip()
+APPLE_TEAM_ID        = os.getenv("APPLE_TEAM_ID", "").strip()
+APPLE_KEY_ID         = os.getenv("APPLE_KEY_ID", "").strip()
+APPLE_PRIVATE_KEY_PATH = os.getenv("APPLE_PRIVATE_KEY_PATH", "").strip()
+
+# ── Flask-Login ────────────────────────────────────────────────────────────
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = "login_page"
 
-# ── User Model ─────────────────────────────────────────────────────────────
+
 class User(UserMixin):
-    def __init__(self, id, username):
+    def __init__(self, id, username, email=None):
         self.id       = id
         self.username = username
+        self.email    = email
 
-# ── SQLite DB Setup ────────────────────────────────────────────────────────
+
+# ── SQLite ───────────────────────────────────────────────────────────────────
 DB_PATH = "finance_quiz.db"
 
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
+
+def _conn():
+    return sqlite3.connect(DB_PATH)
+
+
+def migrate_db():
+    conn = _conn()
     c    = conn.cursor()
     c.execute("""
         CREATE TABLE IF NOT EXISTS users (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            username      TEXT    UNIQUE NOT NULL,
-            password_hash TEXT    NOT NULL,
-            created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            username       TEXT    NOT NULL,
+            email          TEXT    UNIQUE,
+            phone          TEXT    UNIQUE,
+            password_hash  TEXT,
+            oauth_provider TEXT,
+            oauth_subject  TEXT,
+            created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    c.execute("PRAGMA table_info(users)")
+    cols = {row[1] for row in c.fetchall()}
+    # Note: SQLite often rejects UNIQUE on ADD COLUMN; add plain columns then index.
+    for name, ddl in [
+        ("email", "ALTER TABLE users ADD COLUMN email TEXT"),
+        ("phone", "ALTER TABLE users ADD COLUMN phone TEXT"),
+        ("oauth_provider", "ALTER TABLE users ADD COLUMN oauth_provider TEXT"),
+        ("oauth_subject", "ALTER TABLE users ADD COLUMN oauth_subject TEXT"),
+    ]:
+        if name not in cols:
+            try:
+                c.execute(ddl)
+            except sqlite3.OperationalError as e:
+                print(f"DB migrate note ({name}): {e}")
+    c.execute("PRAGMA table_info(users)")
+    cols = {row[1] for row in c.fetchall()}
+    try:
+        c.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email "
+            "ON users(email) WHERE email IS NOT NULL AND length(trim(email)) > 0"
+        )
+        c.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone "
+            "ON users(phone) WHERE phone IS NOT NULL AND length(trim(phone)) > 0"
+        )
+    except sqlite3.OperationalError:
+        pass
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS pending_quiz_context (
+            user_id            INTEGER PRIMARY KEY,
+            stored_pdf_path    TEXT NOT NULL,
+            original_filename  TEXT,
+            updated_at         DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS quiz_reports (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id            INTEGER NOT NULL,
+            created_at         DATETIME DEFAULT CURRENT_TIMESTAMP,
+            pdf_original_name  TEXT,
+            stored_pdf_path    TEXT,
+            score              INTEGER NOT NULL,
+            total_questions    INTEGER NOT NULL,
+            percentage         REAL NOT NULL,
+            grade_title        TEXT,
+            grade_message      TEXT,
+            wrong_topics_json  TEXT,
+            answer_detail_json TEXT,
+            FOREIGN KEY(user_id) REFERENCES users(id)
         )
     """)
     conn.commit()
+    if "email" in cols:
+        c.execute("SELECT id, username FROM users WHERE email IS NULL OR trim(email) = ''")
+        legacy = c.fetchall()
+        for uid, uname in legacy:
+            gen = f"legacy_{uid}_{re.sub(r'[^a-zA-Z0-9._-]', '_', uname)}@migrate.financeiq.local"
+            try:
+                c.execute("UPDATE users SET email = ? WHERE id = ?", (gen, uid))
+            except sqlite3.IntegrityError:
+                c.execute(
+                    "UPDATE users SET email = ? WHERE id = ?",
+                    (f"legacy_user_{uid}@migrate.financeiq.local", uid),
+                )
+        conn.commit()
     conn.close()
+
+
+def init_db():
+    migrate_db()
+
+
+def get_user_row_by_id(user_id):
+    conn = _conn()
+    c    = conn.cursor()
+    c.execute(
+        """SELECT id, username, email, phone, password_hash, oauth_provider, oauth_subject
+           FROM users WHERE id = ?""",
+        (user_id,),
+    )
+    row = c.fetchone()
+    conn.close()
+    return row
+
 
 def get_user_by_username(username):
-    conn = sqlite3.connect(DB_PATH)
+    conn = _conn()
     c    = conn.cursor()
-    c.execute("SELECT id, username, password_hash FROM users WHERE username = ?", (username,))
-    row  = c.fetchone()
+    c.execute(
+        """SELECT id, username, email, phone, password_hash, oauth_provider, oauth_subject
+           FROM users WHERE LOWER(username) = LOWER(?)""",
+        (username.strip(),),
+    )
+    row = c.fetchone()
     conn.close()
     return row
 
-def get_user_by_id(user_id):
-    conn = sqlite3.connect(DB_PATH)
+
+def get_user_by_email(email):
+    if not email:
+        return None
+    conn = _conn()
     c    = conn.cursor()
-    c.execute("SELECT id, username FROM users WHERE id = ?", (user_id,))
-    row  = c.fetchone()
+    c.execute(
+        """SELECT id, username, email, phone, password_hash, oauth_provider, oauth_subject
+           FROM users WHERE LOWER(email) = LOWER(?)""",
+        (email.strip(),),
+    )
+    row = c.fetchone()
     conn.close()
     return row
 
-def create_user(username, password_hash):
-    conn = sqlite3.connect(DB_PATH)
+
+def get_user_by_phone(phone_digits):
+    if not phone_digits or len(phone_digits) < 10:
+        return None
+    conn = _conn()
     c    = conn.cursor()
-    c.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)",
-              (username, password_hash))
+    c.execute(
+        """SELECT id, username, email, phone, password_hash, oauth_provider, oauth_subject
+           FROM users WHERE phone = ?""",
+        (phone_digits,),
+    )
+    row = c.fetchone()
+    conn.close()
+    return row
+
+
+def get_user_by_oauth(provider, subject):
+    conn = _conn()
+    c    = conn.cursor()
+    c.execute(
+        """SELECT id, username, email, phone, password_hash, oauth_provider, oauth_subject
+           FROM users WHERE oauth_provider = ? AND oauth_subject = ?""",
+        (provider, subject),
+    )
+    row = c.fetchone()
+    conn.close()
+    return row
+
+
+def normalize_phone(raw):
+    if not raw:
+        return None
+    digits = re.sub(r"\D", "", raw.strip())
+    return digits if len(digits) >= 10 else None
+
+
+def create_user(username, email, password_hash, phone=None, oauth_provider=None, oauth_subject=None):
+    conn = _conn()
+    c    = conn.cursor()
+    c.execute(
+        """INSERT INTO users (username, email, phone, password_hash, oauth_provider, oauth_subject)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (username, email.lower().strip(), phone, password_hash, oauth_provider, oauth_subject),
+    )
+    conn.commit()
+    uid = c.lastrowid
+    conn.close()
+    return uid
+
+
+def upsert_pending_quiz(user_id, pdf_path, original_name):
+    conn = _conn()
+    c    = conn.cursor()
+    c.execute(
+        """INSERT INTO pending_quiz_context (user_id, stored_pdf_path, original_filename, updated_at)
+           VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+           ON CONFLICT(user_id) DO UPDATE SET
+             stored_pdf_path = excluded.stored_pdf_path,
+             original_filename = excluded.original_filename,
+             updated_at = CURRENT_TIMESTAMP""",
+        (user_id, pdf_path, original_name),
+    )
     conn.commit()
     conn.close()
 
+
+def get_pending_quiz(user_id):
+    conn = _conn()
+    c    = conn.cursor()
+    c.execute(
+        "SELECT stored_pdf_path, original_filename FROM pending_quiz_context WHERE user_id = ?",
+        (user_id,),
+    )
+    row = c.fetchone()
+    conn.close()
+    return row
+
+
+def insert_quiz_report(user_id, meta):
+    conn = _conn()
+    c    = conn.cursor()
+    c.execute(
+        """INSERT INTO quiz_reports (
+             user_id, pdf_original_name, stored_pdf_path, score, total_questions,
+             percentage, grade_title, grade_message, wrong_topics_json, answer_detail_json
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            user_id,
+            meta.get("pdf_original_name"),
+            meta.get("stored_pdf_path"),
+            meta["score"],
+            meta["total_questions"],
+            meta["percentage"],
+            meta.get("grade_title"),
+            meta.get("grade_message"),
+            json.dumps(meta.get("wrong_topics", [])),
+            json.dumps(meta.get("answer_detail", [])),
+        ),
+    )
+    conn.commit()
+    rid = c.lastrowid
+    conn.close()
+    return rid
+
+
+def list_quiz_reports(user_id, limit=50):
+    conn = _conn()
+    c    = conn.cursor()
+    c.execute(
+        """SELECT id, created_at, pdf_original_name, score, total_questions, percentage,
+                  grade_title
+           FROM quiz_reports WHERE user_id = ? ORDER BY id DESC LIMIT ?""",
+        (user_id, limit),
+    )
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+
+def get_quiz_report(report_id, user_id):
+    conn = _conn()
+    c    = conn.cursor()
+    c.execute(
+        """SELECT id, user_id, created_at, pdf_original_name, stored_pdf_path, score,
+                  total_questions, percentage, grade_title, grade_message, wrong_topics_json,
+                  answer_detail_json
+           FROM quiz_reports WHERE id = ? AND user_id = ?""",
+        (report_id, user_id),
+    )
+    row = c.fetchone()
+    conn.close()
+    return row
+
+
 init_db()
+
 
 @login_manager.user_loader
 def load_user(user_id):
-    row = get_user_by_id(user_id)
+    row = get_user_row_by_id(int(user_id))
     if row:
-        return User(row[0], row[1])
+        return User(row[0], row[1], row[2])
     return None
 
+
+def oauth_flags():
+    return {
+        "google_oauth_enabled": bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET),
+        "apple_oauth_enabled": bool(
+            APPLE_CLIENT_ID and APPLE_TEAM_ID and APPLE_KEY_ID and APPLE_PRIVATE_KEY_PATH
+            and os.path.isfile(APPLE_PRIVATE_KEY_PATH)
+        ),
+    }
+
+
+def make_google_flow():
+    redirect_uri = url_for("auth_google_callback", _external=True)
+    return Flow.from_client_config(
+        {
+            "web": {
+                "client_id":     GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "auth_uri":      "https://accounts.google.com/o/oauth2/auth",
+                "token_uri":     "https://oauth2.googleapis.com/token",
+            }
+        },
+        scopes=[
+            "openid",
+            "https://www.googleapis.com/auth/userinfo.email",
+            "https://www.googleapis.com/auth/userinfo.profile",
+        ],
+        redirect_uri=redirect_uri,
+    )
+
+
+def apple_client_secret_jwt():
+    if not all([APPLE_TEAM_ID, APPLE_KEY_ID, APPLE_CLIENT_ID, APPLE_PRIVATE_KEY_PATH]):
+        return None
+    try:
+        with open(APPLE_PRIVATE_KEY_PATH, "r", encoding="utf-8") as f:
+            key = f.read()
+    except OSError:
+        return None
+    now = int(time.time())
+    headers = {"kid": APPLE_KEY_ID, "alg": "ES256"}
+    payload = {
+        "iss": APPLE_TEAM_ID,
+        "iat": now,
+        "exp": now + 86400 * 150,
+        "aud": "https://appleid.apple.com",
+        "sub": APPLE_CLIENT_ID,
+    }
+    return jwt.encode(payload, key, algorithm="ES256", headers=headers)
+
+
+def find_or_create_oauth_user(provider, subject, email_hint, display_name):
+    row = get_user_by_oauth(provider, subject)
+    if row:
+        return User(row[0], row[1], row[2])
+    if email_hint:
+        existing = get_user_by_email(email_hint)
+        if existing and (existing[5] or "").lower() != provider:
+            return None
+        if existing:
+            conn = _conn()
+            c    = conn.cursor()
+            c.execute(
+                "UPDATE users SET oauth_provider = ?, oauth_subject = ? WHERE id = ?",
+                (provider, subject, existing[0]),
+            )
+            conn.commit()
+            conn.close()
+            return User(existing[0], existing[1], existing[2])
+    safe_sub = re.sub(r"[^a-zA-Z0-9._+-]", "_", str(subject))[:56]
+    email = (email_hint or f"{provider}_{safe_sub}@oauth.financeiq.local").lower().strip()
+    if get_user_by_email(email) and not email_hint:
+        email = f"{provider}_{safe_sub}_{secrets.token_hex(4)}@oauth.financeiq.local"
+    uname = (display_name or email.split("@")[0]).strip()[:80] or "Learner"
+    dummy_hash = generate_password_hash(secrets.token_urlsafe(32))
+    uid = create_user(uname, email, dummy_hash, phone=None, oauth_provider=provider, oauth_subject=subject)
+    return User(uid, uname, email)
+
+
+def resolve_login_row(login_id):
+    login_id = login_id.strip()
+    if "@" in login_id:
+        return get_user_by_email(login_id)
+    ph = normalize_phone(login_id)
+    if ph:
+        row = get_user_by_phone(ph)
+        if row:
+            return row
+    return get_user_by_username(login_id)
+
+
+def pdf_safe_text(text, max_len=2000):
+    if text is None:
+        return ""
+    s = str(text).replace("\r", " ").replace("\n", " ")
+    return s.encode("latin-1", "replace").decode("latin-1")[:max_len]
+
+
+class _ReportPdf(FPDF):
+    def footer(self):
+        self.set_y(-12)
+        self.set_font("Helvetica", "I", 8)
+        self.set_text_color(100, 100, 100)
+        self.cell(0, 8, "FinanceIQ - Practice quiz report", align="C")
+
+
+def build_quiz_result_pdf(report_row):
+    """report_row: tuple from get_quiz_report (full row)."""
+    (
+        _rid,
+        _uid,
+        created_at,
+        pdf_original_name,
+        _stored,
+        score,
+        total_questions,
+        percentage,
+        grade_title,
+        grade_message,
+        wrong_topics_json,
+        answer_detail_json,
+    ) = report_row
+    wrong_topics = json.loads(wrong_topics_json or "[]")
+    details      = json.loads(answer_detail_json or "[]")
+
+    pdf = _ReportPdf()
+    pdf.set_auto_page_break(auto=True, margin=14)
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 18)
+    pdf.set_text_color(10, 22, 40)
+    pdf.cell(0, 10, "FinanceIQ Quiz Report", ln=True)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(60, 60, 60)
+    pdf.cell(0, 6, f"Date: {created_at}", ln=True)
+    if pdf_original_name:
+        pdf.cell(0, 6, f"Source document: {pdf_safe_text(pdf_original_name, 120)}", ln=True)
+    pdf.ln(4)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.set_text_color(29, 78, 216)
+    pdf.cell(0, 8, f"Score: {score} / {total_questions}  ({percentage}%)", ln=True)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_text_color(10, 22, 40)
+    pdf.multi_cell(0, 6, pdf_safe_text(grade_title or "", 200))
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(50, 50, 50)
+    pdf.multi_cell(0, 5, pdf_safe_text(grade_message or "", 500))
+    pdf.ln(3)
+    if wrong_topics:
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.cell(0, 6, "Topics to review:", ln=True)
+        pdf.set_font("Helvetica", "", 10)
+        for t in wrong_topics:
+            pdf.multi_cell(0, 5, f"- {pdf_safe_text(t, 200)}")
+        pdf.ln(2)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(0, 8, "Question summary", ln=True)
+    pdf.set_font("Helvetica", "", 9)
+    for i, d in enumerate(details, 1):
+        if pdf.get_y() > 270:
+            pdf.add_page()
+        q  = pdf_safe_text(d.get("question", ""), 400)
+        ok = "Correct" if d.get("is_correct") else "Incorrect"
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.multi_cell(0, 4, f"Q{i} ({ok}) - {pdf_safe_text(d.get('topic', ''), 80)}")
+        pdf.set_font("Helvetica", "", 9)
+        pdf.multi_cell(0, 4, q)
+        pdf.multi_cell(
+            0,
+            4,
+            f"Your answer: {pdf_safe_text(d.get('user_answer', ''), 20)}   "
+            f"Correct: {pdf_safe_text(d.get('correct_answer', ''), 20)}",
+        )
+        pdf.ln(2)
+
+    return BytesIO(bytes(pdf.output()))
+
+
 # ── Load AI Resources ──────────────────────────────────────────────────────
-print("🔄 Loading resources...")
+print("Loading resources...")
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 chroma_client   = chromadb.PersistentClient(path="./chroma_db")
 groq_client     = Groq(api_key=os.getenv("GROQ_API_KEY"))
-print("✅ Resources loaded!")
+print("Resources loaded!")
 
-# ── Global Quiz State ──────────────────────────────────────────────────────
 current_questions = []
 
-# ── Helper: Extract PDF Text ───────────────────────────────────────────────
+
 def extract_pdf_text(filepath):
     doc  = fitz.open(filepath)
     text = ""
@@ -101,7 +533,7 @@ def extract_pdf_text(filepath):
     doc.close()
     return text.strip()
 
-# ── Helper: Chunk Text ─────────────────────────────────────────────────────
+
 def chunk_text(text, chunk_size=300, overlap=50):
     words  = text.split()
     chunks = []
@@ -112,7 +544,7 @@ def chunk_text(text, chunk_size=300, overlap=50):
         start = start + chunk_size - overlap
     return chunks
 
-# ── Helper: Store in ChromaDB ──────────────────────────────────────────────
+
 def store_in_chromadb(chunks):
     embeddings = embedding_model.encode(chunks).tolist()
     existing   = [c.name for c in chroma_client.list_collections()]
@@ -120,22 +552,22 @@ def store_in_chromadb(chunks):
         chroma_client.delete_collection("investment_report")
     collection = chroma_client.get_or_create_collection(
         name="investment_report",
-        metadata={"hnsw:space": "cosine"}
+        metadata={"hnsw:space": "cosine"},
     )
     collection.add(
         documents  = chunks,
         embeddings = embeddings,
-        ids        = [f"chunk_{i}" for i in range(len(chunks))]
+        ids        = [f"chunk_{i}" for i in range(len(chunks))],
     )
     return collection
 
-# ── Helper: Get Context from ChromaDB ─────────────────────────────────────
+
 def get_context(query, collection, n_results=2):
     embedding = embedding_model.encode([query]).tolist()
     results   = collection.query(query_embeddings=embedding, n_results=n_results)
     return "\n".join(results["documents"][0])
 
-# ── Layer 1: Finance Keywords Check ───────────────────────────────────────
+
 def has_finance_keywords(text):
     finance_keywords = [
         "investment", "portfolio", "equity", "stock", "bond", "market",
@@ -150,13 +582,13 @@ def has_finance_keywords(text):
         "rebalancing", "compounding", "liquidity", "capital", "debt",
         "financial statement", "balance sheet", "income statement",
         "cash flow", "annual report", "quarterly report", "forecast",
-        "budget", "audit", "valuation report", "investment report"
+        "budget", "audit", "valuation report", "investment report",
     ]
     text_lower = text.lower()
     found      = [kw for kw in finance_keywords if kw in text_lower]
     return len(found) >= 5, len(found), found[:8]
 
-# ── Layer 2: AI Finance Validator ──────────────────────────────────────────
+
 def is_finance_related(text):
     sample = text[:3000]
     prompt = f"""
@@ -182,13 +614,13 @@ Finance percentage: [estimated % of finance content]
     response = groq_client.chat.completions.create(
         model       = "llama-3.1-8b-instant",
         messages    = [{"role": "user", "content": prompt}],
-        temperature = 0.1
+        temperature = 0.1,
     )
     result   = response.choices[0].message.content.strip()
     decision = "NO"
     reason   = "Could not determine document type"
     percent  = "0%"
-    for line in result.split('\n'):
+    for line in result.split("\n"):
         if line.startswith("Decision:"):
             decision = line.replace("Decision:", "").strip().upper()
         elif line.startswith("Reason:"):
@@ -197,7 +629,7 @@ Finance percentage: [estimated % of finance content]
             percent  = line.replace("Finance percentage:", "").strip()
     return decision, reason, percent
 
-# ── Helper: Generate Questions ─────────────────────────────────────────────
+
 def generate_questions(text, num_questions=6):
     sample = text[:4000]
     prompt = f"""
@@ -227,15 +659,15 @@ Respond ONLY with a valid JSON array in this exact format, nothing else:
     response = groq_client.chat.completions.create(
         model       = "llama-3.1-8b-instant",
         messages    = [{"role": "user", "content": prompt}],
-        temperature = 0.3
+        temperature = 0.3,
     )
     raw   = response.choices[0].message.content.strip()
-    match = re.search(r'\[.*\]', raw, re.DOTALL)
+    match = re.search(r"\[.*\]", raw, re.DOTALL)
     if match:
         raw = match.group(0)
     return json.loads(raw)
 
-# ── Helper: Evaluate Answer ────────────────────────────────────────────────
+
 def evaluate_answer(question, options, correct_answer, user_answer, context):
     options_text = "\n".join(options)
     prompt = f"""
@@ -264,9 +696,10 @@ Key Concept: [one key takeaway]
     response = groq_client.chat.completions.create(
         model       = "llama-3.1-8b-instant",
         messages    = [{"role": "user", "content": prompt}],
-        temperature = 0.3
+        temperature = 0.3,
     )
     return response.choices[0].message.content
+
 
 # ══════════════════════════════════════════════════════════════════════════
 #  AUTH ROUTES
@@ -278,62 +711,262 @@ def home():
         return redirect(url_for("dashboard"))
     return redirect(url_for("login_page"))
 
+
 @app.route("/login", methods=["GET"])
 def login_page():
     if current_user.is_authenticated:
         return redirect(url_for("dashboard"))
-    return render_template("login.html")
+    ctx = oauth_flags()
+    return render_template(
+        "login.html",
+        active_tab=request.args.get("tab", "login"),
+        **ctx,
+    )
+
 
 @app.route("/login", methods=["POST"])
 def login_post():
-    username = request.form.get("username", "").strip()
+    login_id = request.form.get("login_id", "").strip()
     password = request.form.get("password", "").strip()
 
-    if not username or not password:
-        return render_template("login.html",
-                               error="Please enter both username and password.",
-                               active_tab="login")
-    row = get_user_by_username(username)
-    if not row or not check_password_hash(row[2], password):
-        return render_template("login.html",
-                               error="Invalid username or password.",
-                               active_tab="login")
-    user = User(row[0], row[1])
+    if not login_id or not password:
+        return render_template(
+            "login.html",
+            error="Please enter your email, phone, or username and password.",
+            active_tab="login",
+            **oauth_flags(),
+        )
+    row = resolve_login_row(login_id)
+    if not row or not row[4]:
+        return render_template(
+            "login.html",
+            error="Invalid credentials.",
+            active_tab="login",
+            **oauth_flags(),
+        )
+    if not check_password_hash(row[4], password):
+        return render_template(
+            "login.html",
+            error="Invalid credentials.",
+            active_tab="login",
+            **oauth_flags(),
+        )
+    user = User(row[0], row[1], row[2])
     login_user(user)
     return redirect(url_for("dashboard"))
+
 
 @app.route("/register", methods=["POST"])
 def register_post():
     username = request.form.get("username", "").strip()
+    email    = request.form.get("email", "").strip()
+    phone_raw = request.form.get("phone", "").strip()
     password = request.form.get("password", "").strip()
     confirm  = request.form.get("confirm_password", "").strip()
+    phone    = normalize_phone(phone_raw)
 
-    if not username or not password:
-        return render_template("login.html",
-                               error="Please fill in all fields.",
-                               active_tab="register")
-    if len(username) < 3:
-        return render_template("login.html",
-                               error="Username must be at least 3 characters.",
-                               active_tab="register")
+    if not username or not email or not password:
+        return render_template(
+            "login.html",
+            error="Please fill in display name, email, and password.",
+            active_tab="register",
+            **oauth_flags(),
+        )
+    if len(username) < 2:
+        return render_template(
+            "login.html",
+            error="Display name must be at least 2 characters.",
+            active_tab="register",
+            **oauth_flags(),
+        )
+    if "@" not in email or len(email) < 5:
+        return render_template(
+            "login.html",
+            error="Please enter a valid email address.",
+            active_tab="register",
+            **oauth_flags(),
+        )
     if len(password) < 6:
-        return render_template("login.html",
-                               error="Password must be at least 6 characters.",
-                               active_tab="register")
+        return render_template(
+            "login.html",
+            error="Password must be at least 6 characters.",
+            active_tab="register",
+            **oauth_flags(),
+        )
     if password != confirm:
-        return render_template("login.html",
-                               error="Passwords do not match.",
-                               active_tab="register")
-    if get_user_by_username(username):
-        return render_template("login.html",
-                               error="Username already exists. Please choose another.",
-                               active_tab="register")
+        return render_template(
+            "login.html",
+            error="Passwords do not match.",
+            active_tab="register",
+            **oauth_flags(),
+        )
+    if get_user_by_email(email):
+        return render_template(
+            "login.html",
+            error="That email is already registered.",
+            active_tab="register",
+            **oauth_flags(),
+        )
+    if phone and get_user_by_phone(phone):
+        return render_template(
+            "login.html",
+            error="That mobile number is already registered.",
+            active_tab="register",
+            **oauth_flags(),
+        )
 
-    create_user(username, generate_password_hash(password))
-    row  = get_user_by_username(username)
-    user = User(row[0], row[1])
+    create_user(
+        username,
+        email,
+        generate_password_hash(password),
+        phone=phone,
+        oauth_provider=None,
+        oauth_subject=None,
+    )
+    row  = get_user_by_email(email)
+    user = User(row[0], row[1], row[2])
     login_user(user)
     return redirect(url_for("dashboard"))
+
+
+@app.route("/auth/google")
+def auth_google():
+    if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET):
+        flash("Google sign-in is not configured on this server.")
+        return redirect(url_for("login_page"))
+    state = secrets.token_urlsafe(32)
+    session["google_oauth_state"] = state
+    flow = make_google_flow()
+    authorization_url, _ = flow.authorization_url(
+        access_type="offline",
+        include_granted_scopes="true",
+        prompt="select_account",
+        state=state,
+    )
+    return redirect(authorization_url)
+
+
+@app.route("/auth/google/callback")
+def auth_google_callback():
+    if request.args.get("state") != session.get("google_oauth_state"):
+        flash("Sign-in session expired. Please try again.")
+        return redirect(url_for("login_page"))
+    session.pop("google_oauth_state", None)
+    try:
+        flow = make_google_flow()
+        flow.fetch_token(authorization_response=request.url)
+        creds = flow.credentials
+        id_info = google_id_token.verify_oauth2_token(
+            creds.id_token, google_requests.Request(), GOOGLE_CLIENT_ID
+        )
+        email = id_info.get("email")
+        name  = id_info.get("name") or (email.split("@")[0] if email else "Learner")
+        sub   = id_info.get("sub")
+        if not sub:
+            flash("Could not verify Google account.")
+            return redirect(url_for("login_page"))
+        user = find_or_create_oauth_user("google", sub, email, name)
+        if not user:
+            flash("That email is already used with a different sign-in method.")
+            return redirect(url_for("login_page"))
+        login_user(user)
+        return redirect(url_for("dashboard"))
+    except Exception as e:
+        print(f"Google OAuth error: {e}")
+        flash("Google sign-in failed. Please try again or use email.")
+        return redirect(url_for("login_page"))
+
+
+@app.route("/auth/apple")
+def auth_apple():
+    if not oauth_flags()["apple_oauth_enabled"]:
+        flash("Apple sign-in is not configured on this server.")
+        return redirect(url_for("login_page"))
+    state = secrets.token_urlsafe(32)
+    session["apple_oauth_state"] = state
+    redirect_uri = url_for("auth_apple_callback", _external=True)
+    qs = urlencode(
+        {
+            "response_type":   "code",
+            "response_mode":   "form_post",
+            "client_id":       APPLE_CLIENT_ID,
+            "redirect_uri":    redirect_uri,
+            "scope":           "name email",
+            "state":           state,
+        }
+    )
+    return redirect(f"https://appleid.apple.com/auth/authorize?{qs}")
+
+
+@app.route("/auth/apple/callback", methods=["POST"])
+def auth_apple_callback():
+    if request.form.get("state") != session.get("apple_oauth_state"):
+        flash("Sign-in session expired. Please try again.")
+        return redirect(url_for("login_page"))
+    session.pop("apple_oauth_state", None)
+    code = request.form.get("code")
+    if not code:
+        flash("Apple did not return an authorization code.")
+        return redirect(url_for("login_page"))
+    client_secret = apple_client_secret_jwt()
+    if not client_secret:
+        flash("Apple sign-in is misconfigured.")
+        return redirect(url_for("login_page"))
+    redirect_uri = url_for("auth_apple_callback", _external=True)
+    token_res = requests.post(
+        "https://appleid.apple.com/auth/token",
+        data={
+            "client_id":     APPLE_CLIENT_ID,
+            "client_secret": client_secret,
+            "code":          code,
+            "grant_type":    "authorization_code",
+            "redirect_uri":  redirect_uri,
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        timeout=30,
+    )
+    if not token_res.ok:
+        flash("Could not complete Apple sign-in.")
+        return redirect(url_for("login_page"))
+    tokens   = token_res.json()
+    id_token = tokens.get("id_token")
+    if not id_token:
+        flash("Apple response was incomplete.")
+        return redirect(url_for("login_page"))
+    try:
+        jwks_client = PyJWKClient("https://appleid.apple.com/auth/keys")
+        signing_key = jwks_client.get_signing_key_from_jwt(id_token)
+        payload = jwt.decode(
+            id_token,
+            signing_key.key,
+            algorithms=["RS256"],
+            audience=APPLE_CLIENT_ID,
+            issuer="https://appleid.apple.com",
+        )
+    except Exception as e:
+        print(f"Apple JWT verify error: {e}")
+        flash("Could not verify Apple identity.")
+        return redirect(url_for("login_page"))
+    sub   = payload.get("sub")
+    email = payload.get("email")
+    name  = "Learner"
+    user_field = request.form.get("user")
+    if user_field:
+        try:
+            uj = json.loads(user_field)
+            name = (uj.get("name") or {}).get("firstName") or name
+        except json.JSONDecodeError:
+            pass
+    if not sub:
+        flash("Apple sign-in incomplete.")
+        return redirect(url_for("login_page"))
+    user = find_or_create_oauth_user("apple", sub, email, name)
+    if not user:
+        flash("That Apple account could not be linked.")
+        return redirect(url_for("login_page"))
+    login_user(user)
+    return redirect(url_for("dashboard"))
+
 
 @app.route("/logout")
 @login_required
@@ -341,10 +974,35 @@ def logout():
     logout_user()
     return redirect(url_for("login_page"))
 
+
 @app.route("/dashboard")
 @login_required
 def dashboard():
-    return render_template("dashboard.html", username=current_user.username)
+    reports = list_quiz_reports(current_user.id)
+    return render_template(
+        "dashboard.html",
+        username=current_user.username,
+        email=current_user.email,
+        reports=reports,
+    )
+
+
+@app.route("/reports/<int:report_id>/download.pdf")
+@login_required
+def download_report_pdf(report_id):
+    row = get_quiz_report(report_id, current_user.id)
+    if not row:
+        flash("Report not found.")
+        return redirect(url_for("dashboard"))
+    buf = build_quiz_result_pdf(row)
+    fname = f"financeiq-report-{report_id}.pdf"
+    return send_file(
+        buf,
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=fname,
+    )
+
 
 # ══════════════════════════════════════════════════════════════════════════
 #  QUIZ ROUTES
@@ -355,6 +1013,7 @@ def dashboard():
 def quiz_page():
     return render_template("index.html")
 
+
 @app.route("/api/upload", methods=["POST"])
 @login_required
 def upload_pdf():
@@ -363,7 +1022,7 @@ def upload_pdf():
     if "file" not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
 
-    file         = request.files["file"]
+    file          = request.files["file"]
     num_questions = int(request.form.get("num_questions", 6))
 
     if file.filename == "":
@@ -373,63 +1032,70 @@ def upload_pdf():
     if num_questions < 2 or num_questions > 20:
         return jsonify({"error": "Question count must be between 2 and 20"}), 400
 
-    filepath = os.path.join(UPLOAD_FOLDER, "report.pdf")
+    user_dir = os.path.join(UPLOAD_FOLDER, f"user_{current_user.id}")
+    os.makedirs(user_dir, exist_ok=True)
+    uid_name = f"{uuid.uuid4().hex}.pdf"
+    filepath = os.path.join(user_dir, uid_name)
     file.save(filepath)
 
     try:
-        print("📄 Extracting PDF text...")
+        print("Extracting PDF text...")
         text = extract_pdf_text(filepath)
 
         if len(text.strip()) < 100:
             return jsonify({"error": "PDF appears to be empty or unreadable"}), 400
 
-        # Layer 1: Keywords
-        print("🔍 Layer 1: Checking finance keywords...")
+        print("Layer 1: Checking finance keywords...")
         kw_passed, kw_count, kw_found = has_finance_keywords(text)
-        print(f"   → Found {kw_count} keywords: {kw_found}")
+        print(f"   Found {kw_count} keywords: {kw_found}")
 
         if not kw_passed:
             return jsonify({
-                "error": f"This document does not appear to be finance related. "
-                         f"Only {kw_count} finance keywords found (minimum 5 required). "
-                         f"Please upload an Investment Report or Financial document."
+                "error": (
+                    f"This document does not appear to be finance related. "
+                    f"Only {kw_count} finance keywords found (minimum 5 required). "
+                    f"Please upload an Investment Report or Financial document."
+                ),
             }), 400
 
-        # Layer 2: AI validation
-        print("🤖 Layer 2: AI finance validation...")
+        print("Layer 2: AI finance validation...")
         decision, reason, percent = is_finance_related(text)
-        print(f"   → Decision: {decision} | {reason} | {percent}")
+        print(f"   Decision: {decision} | {reason} | {percent}")
 
         if decision == "NO":
             return jsonify({
-                "error": f"This document is not finance related. "
-                         f"Detected: {reason}. Please upload a Finance document."
+                "error": (
+                    f"This document is not finance related. "
+                    f"Detected: {reason}. Please upload a Finance document."
+                ),
             }), 400
 
         if decision == "PARTIAL":
             return jsonify({
-                "error": f"This document is only partially finance related ({percent}). "
-                         f"Please upload a document that is primarily about finance."
+                "error": (
+                    f"This document is only partially finance related ({percent}). "
+                    f"Please upload a document that is primarily about finance."
+                ),
             }), 400
 
-        print(f"✅ Finance validation passed! ({percent})")
+        print(f"Finance validation passed! ({percent})")
 
-        # Store in ChromaDB
-        print("🗄️ Storing in ChromaDB...")
+        print("Storing in ChromaDB...")
         chunks = chunk_text(text)
         store_in_chromadb(chunks)
 
-        # Generate questions
-        print(f"🤖 Generating {num_questions} questions...")
+        upsert_pending_quiz(current_user.id, filepath, file.filename)
+
+        print(f"Generating {num_questions} questions...")
         current_questions = generate_questions(text, num_questions)
-        print(f"✅ Generated {len(current_questions)} questions!")
+        print(f"Generated {len(current_questions)} questions!")
 
         return jsonify({
-            "success":          True,
-            "message":          "PDF processed successfully!",
-            "finance_percent":  percent,
-            "chunks":           len(chunks),
-            "questions":        len(current_questions)
+            "success":         True,
+            "message":         "PDF processed successfully!",
+            "finance_percent": percent,
+            "chunks":          len(chunks),
+            "questions":       len(current_questions),
         })
 
     except json.JSONDecodeError:
@@ -437,6 +1103,7 @@ def upload_pdf():
     except Exception as e:
         print(f"Error: {e}")
         return jsonify({"error": str(e)}), 500
+
 
 @app.route("/api/questions", methods=["GET"])
 @login_required
@@ -449,9 +1116,10 @@ def get_questions():
             "id":       i,
             "question": q["question"],
             "topic":    q["topic"],
-            "options":  q["options"]
+            "options":  q["options"],
         })
     return jsonify({"questions": questions})
+
 
 @app.route("/api/submit", methods=["POST"])
 @login_required
@@ -464,21 +1132,22 @@ def submit_answer():
     is_correct     = user_answer == correct_answer
 
     try:
-        collection  = chroma_client.get_collection("investment_report")
-        context     = get_context(q["question"], collection)
+        collection = chroma_client.get_collection("investment_report")
+        context    = get_context(q["question"], collection)
     except Exception:
-        context     = "No additional context available."
+        context = "No additional context available."
 
     explanation = evaluate_answer(
         q["question"], q["options"],
-        correct_answer, user_answer, context
+        correct_answer, user_answer, context,
     )
     return jsonify({
         "is_correct":     is_correct,
         "correct_answer": correct_answer,
         "explanation":    explanation,
-        "topic":          q["topic"]
+        "topic":          q["topic"],
     })
+
 
 @app.route("/api/result", methods=["POST"])
 @login_required
@@ -487,16 +1156,16 @@ def get_result():
     score        = data.get("score", 0)
     total        = data.get("total", len(current_questions))
     wrong_topics = data.get("wrong_topics", [])
-    percentage   = (score / total) * 100
+    percentage   = (score / total) * 100 if total else 0
 
     if percentage >= 80:
-        grade   = "Excellent! 🏆"
+        grade   = "Excellent!"
         message = "Outstanding performance! You have a strong grasp of investment concepts."
     elif percentage >= 60:
-        grade   = "Good Job! 👍"
+        grade   = "Good Job!"
         message = "Good understanding! Review the topics you missed to strengthen your knowledge."
     else:
-        grade   = "Keep Studying! 📖"
+        grade   = "Keep Studying!"
         message = "Keep practicing! Focus on the topics below to improve your finance knowledge."
 
     return jsonify({
@@ -505,9 +1174,40 @@ def get_result():
         "percentage":   round(percentage, 1),
         "grade":        grade,
         "message":      message,
-        "wrong_topics": list(set(wrong_topics))
+        "wrong_topics": list(set(wrong_topics)),
     })
 
-# ── Run ────────────────────────────────────────────────────────────────────
+
+@app.route("/api/reports/save", methods=["POST"])
+@login_required
+def save_quiz_report():
+    data = request.json or {}
+    pending = get_pending_quiz(current_user.id)
+    stored_path = pending[0] if pending else None
+    orig_name   = pending[1] if pending else data.get("pdf_filename")
+
+    try:
+        rid = insert_quiz_report(
+            current_user.id,
+            {
+                "pdf_original_name": orig_name or "report.pdf",
+                "stored_pdf_path": stored_path,
+                "score":             int(data.get("score", 0)),
+                "total_questions":   int(data.get("total", 0)),
+                "percentage":        float(data.get("percentage", 0)),
+                "grade_title":       data.get("grade"),
+                "grade_message":     data.get("message"),
+                "wrong_topics":      data.get("wrong_topics", []),
+                "answer_detail":     data.get("answer_detail", []),
+            },
+        )
+        return jsonify({"success": True, "report_id": rid})
+    except Exception as e:
+        print(f"save report: {e}")
+        return jsonify({"error": "Could not save report"}), 500
+
+
 if __name__ == "__main__":
+    # Google OAuth against http://127.0.0.1:5000 requires this in development.
+    os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
     app.run(debug=True, port=5000)

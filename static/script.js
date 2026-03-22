@@ -6,6 +6,8 @@ let wrongTopics   = [];
 let answered      = false;
 let selectedFile  = null;
 let numQuestions  = 4;
+let answerLog     = [];
+let lastUploadedFilename = null;
 
 // ── Screen Helper ──────────────────────────────────────────────────────────
 function showScreen(id) {
@@ -53,6 +55,7 @@ function processFile(file) {
     return;
   }
   selectedFile = file;
+  lastUploadedFilename = file.name;
   hideError();
 
   // Show file preview
@@ -67,6 +70,7 @@ function processFile(file) {
 // ── Remove File ────────────────────────────────────────────────────────────
 function removeFile() {
   selectedFile = null;
+  lastUploadedFilename = null;
   document.getElementById('file-preview').style.display        = 'none';
   document.getElementById('question-count-wrap').style.display = 'none';
   document.getElementById('upload-btn').style.display          = 'none';
@@ -168,6 +172,7 @@ async function startQuiz() {
     currentIndex = 0;
     score        = 0;
     wrongTopics  = [];
+    answerLog    = [];
 
     showScreen('quiz-screen');
     renderQuestion();
@@ -243,6 +248,15 @@ async function selectAnswer(letter, clickedBtn) {
       wrongTopics.push(data.topic);
     }
 
+    answerLog.push({
+      topic:           data.topic,
+      question:        questions[currentIndex].question,
+      user_answer:     letter,
+      correct_answer:  data.correct_answer,
+      is_correct:      data.is_correct,
+      explanation:     data.explanation,
+    });
+
     // Badge
     const badge     = document.getElementById('result-badge');
     badge.textContent = data.is_correct ? '✅ Correct!' : '❌ Incorrect';
@@ -315,6 +329,21 @@ async function showResults() {
     }
 
     buildChart();
+
+    fetch('/api/reports/save', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        score:          data.score,
+        total:          data.total,
+        percentage:     data.percentage,
+        grade:          data.grade,
+        message:        data.message,
+        wrong_topics:   data.wrong_topics,
+        answer_detail:  answerLog,
+        pdf_filename:   lastUploadedFilename,
+      }),
+    }).catch(() => {});
 
   } catch (err) {
     alert('Could not load results. Please try again.');
@@ -407,6 +436,7 @@ function restartQuiz() {
   currentIndex = 0;
   score        = 0;
   wrongTopics  = [];
+  answerLog    = [];
   showScreen('quiz-screen');
   renderQuestion();
 }
@@ -414,6 +444,7 @@ function restartQuiz() {
 // ── Upload New PDF ─────────────────────────────────────────────────────────
 function uploadNewPDF() {
   selectedFile = null;
+  lastUploadedFilename = null;
   const canvas = document.getElementById('resultsChart');
   const old    = Chart.getChart(canvas);
   if (old) old.destroy();

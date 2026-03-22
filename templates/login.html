@@ -11,10 +11,9 @@
 
   <div class="auth-wrapper">
 
-    <!-- Left Panel -->
     <div class="auth-left">
       <div class="auth-brand">
-        <span class="auth-logo">📊</span>
+        <img src="{{ url_for('static', filename='financeiq-mark.svg') }}" alt="" class="auth-logo-img" width="44" height="44"/>
         <span class="auth-brand-name">FinanceIQ</span>
       </div>
       <h1 class="auth-headline">Master Finance<br/>with AI-Powered<br/>Assessments</h1>
@@ -37,86 +36,117 @@
         </div>
         <div class="auth-feature">
           <span class="af-icon">📈</span>
-          <span>Track your performance</span>
+          <span>Save reports and download PDFs anytime</span>
         </div>
       </div>
     </div>
 
-    <!-- Right Panel -->
     <div class="auth-right">
       <div class="auth-card">
 
-        <!-- Tabs -->
+        {% with messages = get_flashed_messages() %}
+          {% if messages %}
+            <div class="auth-error auth-flash">
+              {% for m in messages %}<span>{{ m }}</span>{% endfor %}
+            </div>
+          {% endif %}
+        {% endwith %}
+
         <div class="auth-tabs">
           <button class="auth-tab {% if active_tab == 'register' %}{% else %}active{% endif %}"
-                  onclick="switchTab('login')" id="tab-login">
+                  type="button" onclick="switchTab('login')" id="tab-login">
             Sign In
           </button>
           <button class="auth-tab {% if active_tab == 'register' %}active{% endif %}"
-                  onclick="switchTab('register')" id="tab-register">
+                  type="button" onclick="switchTab('register')" id="tab-register">
             Register
           </button>
         </div>
 
-        <!-- Error Message -->
         {% if error %}
         <div class="auth-error">
           <span>⚠️ {{ error }}</span>
         </div>
         {% endif %}
 
-        <!-- LOGIN FORM -->
+        <div class="auth-social-row {% if not google_oauth_enabled and not apple_oauth_enabled %}hidden{% endif %}">
+          {% if google_oauth_enabled %}
+          <a class="btn-social btn-google" href="{{ url_for('auth_google') }}">
+            <span class="bs-icon" aria-hidden="true">G</span>
+            Continue with Google
+          </a>
+          {% endif %}
+          {% if apple_oauth_enabled %}
+          <a class="btn-social btn-apple" href="{{ url_for('auth_apple') }}">
+            <span class="bs-icon" aria-hidden="true"></span>
+            Continue with Apple
+          </a>
+          {% endif %}
+        </div>
+        <p class="auth-divider {% if not google_oauth_enabled and not apple_oauth_enabled %}hidden{% endif %}">
+          <span>or use email</span>
+        </p>
+
         <form id="form-login"
               class="auth-form {% if active_tab == 'register' %}hidden{% endif %}"
               action="/login" method="POST">
           <div class="auth-welcome">
             <h2>Welcome Back!</h2>
-            <p>Sign in to continue your learning journey</p>
+            <p>Sign in with email, mobile, or your display name</p>
           </div>
           <div class="form-group">
-            <label class="form-label">Username</label>
-            <input type="text" name="username" class="form-input"
-                   placeholder="Enter your username" required/>
+            <label class="form-label">Email, mobile, or username</label>
+            <input type="text" name="login_id" class="form-input"
+                   placeholder="you@email.com or +1…" required autocomplete="username"/>
           </div>
           <div class="form-group">
             <label class="form-label">Password</label>
             <input type="password" name="password" class="form-input"
-                   placeholder="Enter your password" required/>
+                   placeholder="Enter your password" required autocomplete="current-password"/>
           </div>
           <button type="submit" class="btn-auth">Sign In →</button>
           <p class="auth-switch">
             Don't have an account?
-            <a href="#" onclick="switchTab('register')">Register here</a>
+            <a href="#" onclick="switchTab('register'); return false;">Register here</a>
           </p>
         </form>
 
-        <!-- REGISTER FORM -->
         <form id="form-register"
               class="auth-form {% if active_tab != 'register' %}hidden{% endif %}"
               action="/register" method="POST">
           <div class="auth-welcome">
             <h2>Create Account</h2>
-            <p>Join FinanceIQ and start learning today</p>
+            <p>Register with email and optional mobile number</p>
           </div>
           <div class="form-group">
-            <label class="form-label">Username</label>
+            <label class="form-label">Email</label>
+            <input type="email" name="email" class="form-input"
+                   placeholder="you@company.com" required autocomplete="email"/>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Mobile number <span class="label-optional">(optional)</span></label>
+            <input type="tel" name="phone" class="form-input"
+                   placeholder="+1 555 000 0000" autocomplete="tel"/>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Display name</label>
             <input type="text" name="username" class="form-input"
-                   placeholder="Choose a username (min 3 chars)" required/>
+                   placeholder="How we should greet you" required minlength="2" autocomplete="nickname"/>
           </div>
           <div class="form-group">
             <label class="form-label">Password</label>
             <input type="password" name="password" class="form-input"
-                   placeholder="Choose a password (min 6 chars)" required/>
+                   placeholder="At least 6 characters" required minlength="6" autocomplete="new-password"/>
           </div>
           <div class="form-group">
-            <label class="form-label">Confirm Password</label>
+            <label class="form-label">Confirm password</label>
             <input type="password" name="confirm_password" class="form-input"
-                   placeholder="Confirm your password" required/>
+                   placeholder="Confirm your password" required autocomplete="new-password"/>
           </div>
           <button type="submit" class="btn-auth">Create Account →</button>
           <p class="auth-switch">
             Already have an account?
-            <a href="#" onclick="switchTab('login')">Sign in here</a>
+            <a href="#" onclick="switchTab('login'); return false;">Sign in here</a>
           </p>
         </form>
 

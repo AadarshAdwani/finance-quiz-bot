@@ -72,6 +72,12 @@ body.auth-body {
   margin-bottom: 40px;
 }
 .auth-logo { font-size: 28px; }
+.auth-logo-img {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  flex-shrink: 0;
+}
 .auth-brand-name {
   font-family: 'Playfair Display', serif;
   font-size: 22px;
@@ -155,6 +161,92 @@ body.auth-body {
   font-size: 13px;
   margin-bottom: 16px;
 }
+.auth-flash span { display: block; }
+
+.auth-social-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.auth-social-row.hidden { display: none; }
+.btn-social {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 11px 14px;
+  border-radius: var(--radius-sm);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  border: 1.5px solid var(--grey-200);
+  color: var(--navy);
+  background: var(--grey-100);
+  transition: background .2s, border-color .2s;
+}
+.btn-social:hover {
+  background: white;
+  border-color: var(--grey-400);
+}
+.btn-google .bs-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  background: linear-gradient(135deg, #4285f4, #34a853 40%, #fbbc05 70%, #ea4335);
+  color: white;
+  font-size: 12px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.btn-apple {
+  background: #111;
+  color: #fff;
+  border-color: #111;
+}
+.btn-apple:hover {
+  background: #222;
+  border-color: #222;
+  color: #fff;
+}
+.btn-apple .bs-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  background: #fff;
+}
+.auth-divider {
+  text-align: center;
+  font-size: 12px;
+  color: var(--grey-400);
+  margin: 14px 0 18px;
+  position: relative;
+}
+.auth-divider.hidden { display: none; }
+.auth-divider span {
+  background: var(--white);
+  padding: 0 10px;
+  position: relative;
+  z-index: 1;
+}
+.auth-divider::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  background: var(--grey-200);
+  z-index: 0;
+}
+.label-optional {
+  font-weight: 400;
+  color: var(--grey-400);
+}
+.hidden { display: none !important; }
 
 /* Auth Form */
 .auth-form { display: flex; flex-direction: column; gap: 0; }
@@ -245,6 +337,12 @@ body.auth-body {
 }
 .nav-brand { display: flex; align-items: center; gap: 10px; }
 .nav-icon  { font-size: 22px; }
+.nav-logo-img {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
 .nav-title {
   font-family: 'Playfair Display', serif;
   font-size: 20px;
@@ -332,7 +430,16 @@ body.auth-body {
   line-height: 1.6;
   max-width: 420px;
 }
-.dash-banner-icon { font-size: 64px; opacity: .8; }
+.dash-banner-icon {
+  opacity: .95;
+  line-height: 0;
+}
+.dash-banner-icon img {
+  display: block;
+  width: 88px;
+  height: 88px;
+  border-radius: 18px;
+}
 
 /* Stats */
 .dash-stats {
@@ -364,6 +471,77 @@ body.auth-body {
   font-size: 14px;
   font-weight: 600;
   color: var(--navy);
+}
+
+/* Saved reports */
+.flash-banner {
+  max-width: 1100px;
+  margin: 0 auto 16px;
+  padding: 12px 20px;
+  background: rgba(239,68,68,.1);
+  border: 1px solid rgba(239,68,68,.25);
+  border-radius: var(--radius-sm);
+  color: #991b1b;
+  font-size: 14px;
+}
+.dash-reports-section {
+  background: var(--white);
+  border-radius: var(--radius);
+  padding: 28px 32px;
+  margin-bottom: 28px;
+  box-shadow: var(--shadow-md);
+}
+.dash-reports-title {
+  font-family: 'Playfair Display', serif;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--navy);
+  margin-bottom: 6px;
+}
+.dash-reports-hint {
+  font-size: 14px;
+  color: var(--grey-400);
+  margin-bottom: 18px;
+}
+.dash-reports-empty {
+  font-size: 14px;
+  color: var(--grey-400);
+}
+.dash-reports-table-wrap { overflow-x: auto; }
+.dash-reports-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.dash-reports-table th,
+.dash-reports-table td {
+  text-align: left;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--grey-200);
+}
+.dash-reports-table th {
+  font-weight: 600;
+  color: var(--grey-700);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.dr-date { white-space: nowrap; color: var(--grey-700); }
+.dr-doc { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.dr-actions { text-align: right; }
+.btn-report-pdf {
+  display: inline-block;
+  padding: 8px 14px;
+  background: var(--blue-pale);
+  color: var(--blue);
+  font-weight: 600;
+  font-size: 13px;
+  border-radius: 8px;
+  text-decoration: none;
+  border: 1px solid rgba(29,78,216,.2);
+}
+.btn-report-pdf:hover {
+  background: rgba(29,78,216,.12);
 }
 
 /* Quiz Card */
