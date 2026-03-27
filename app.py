@@ -26,8 +26,28 @@ from google.auth.transport import requests as google_requests
 from google_auth_oauthlib.flow import Flow
 from jwt import PyJWKClient
 from fpdf import FPDF
+from datetime import datetime, timezone, timedelta
 
 load_dotenv()
+
+# ── IST Timezone ───────────────────────────────────────────────────────────
+IST = timezone(timedelta(hours=5, minutes=30))
+
+def now_ist():
+    """Return current UTC datetime string for storage in SQLite."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+def format_ist(dt_str):
+    """Convert a UTC datetime string from SQLite to IST formatted string."""
+    if not dt_str:
+        return "Unknown"
+    try:
+        dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
+        dt_utc = dt.replace(tzinfo=timezone.utc)
+        dt_ist = dt_utc.astimezone(IST)
+        return dt_ist.strftime("%d %b %Y, %I:%M %p")
+    except Exception:
+        return dt_str
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "financeiq-secret-key-2024")
@@ -57,7 +77,7 @@ class User(UserMixin):
         self.email    = email
 
 
-# ── SQLite ───────────────────────────────────────────────────────────────────
+# ── SQLite ─────────────────────────────────────────────────────────────────
 DB_PATH = "finance_quiz.db"
 
 
@@ -82,20 +102,17 @@ def migrate_db():
     """)
     c.execute("PRAGMA table_info(users)")
     cols = {row[1] for row in c.fetchall()}
-    # Note: SQLite often rejects UNIQUE on ADD COLUMN; add plain columns then index.
     for name, ddl in [
-        ("email", "ALTER TABLE users ADD COLUMN email TEXT"),
-        ("phone", "ALTER TABLE users ADD COLUMN phone TEXT"),
+        ("email",          "ALTER TABLE users ADD COLUMN email TEXT"),
+        ("phone",          "ALTER TABLE users ADD COLUMN phone TEXT"),
         ("oauth_provider", "ALTER TABLE users ADD COLUMN oauth_provider TEXT"),
-        ("oauth_subject", "ALTER TABLE users ADD COLUMN oauth_subject TEXT"),
+        ("oauth_subject",  "ALTER TABLE users ADD COLUMN oauth_subject TEXT"),
     ]:
         if name not in cols:
             try:
                 c.execute(ddl)
             except sqlite3.OperationalError as e:
                 print(f"DB migrate note ({name}): {e}")
-    c.execute("PRAGMA table_info(users)")
-    cols = {row[1] for row in c.fetchall()}
     try:
         c.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email "
@@ -134,6 +151,8 @@ def migrate_db():
         )
     """)
     conn.commit()
+    c.execute("PRAGMA table_info(users)")
+    cols = {row[1] for row in c.fetchall()}
     if "email" in cols:
         c.execute("SELECT id, username FROM users WHERE email IS NULL OR trim(email) = ''")
         legacy = c.fetchall()
@@ -158,8 +177,8 @@ def get_user_row_by_id(user_id):
     conn = _conn()
     c    = conn.cursor()
     c.execute(
-        """SELECT id, username, email, phone, password_hash, oauth_provider, oauth_subject
-           FROM users WHERE id = ?""",
+        "SELECT id, username, email, phone, password_hash, oauth_provider, oauth_subject "
+        "FROM users WHERE id = ?",
         (user_id,),
     )
     row = c.fetchone()
@@ -171,8 +190,8 @@ def get_user_by_username(username):
     conn = _conn()
     c    = conn.cursor()
     c.execute(
-        """SELECT id, username, email, phone, password_hash, oauth_provider, oauth_subject
-           FROM users WHERE LOWER(username) = LOWER(?)""",
+        "SELECT id, username, email, phone, password_hash, oauth_provider, oauth_subject "
+        "FROM users WHERE LOWER(username) = LOWER(?)",
         (username.strip(),),
     )
     row = c.fetchone()
@@ -186,8 +205,8 @@ def get_user_by_email(email):
     conn = _conn()
     c    = conn.cursor()
     c.execute(
-        """SELECT id, username, email, phone, password_hash, oauth_provider, oauth_subject
-           FROM users WHERE LOWER(email) = LOWER(?)""",
+        "SELECT id, username, email, phone, password_hash, oauth_provider, oauth_subject "
+        "FROM users WHERE LOWER(email) = LOWER(?)",
         (email.strip(),),
     )
     row = c.fetchone()
@@ -201,8 +220,8 @@ def get_user_by_phone(phone_digits):
     conn = _conn()
     c    = conn.cursor()
     c.execute(
-        """SELECT id, username, email, phone, password_hash, oauth_provider, oauth_subject
-           FROM users WHERE phone = ?""",
+        "SELECT id, username, email, phone, password_hash, oauth_provider, oauth_subject "
+        "FROM users WHERE phone = ?",
         (phone_digits,),
     )
     row = c.fetchone()
@@ -214,8 +233,8 @@ def get_user_by_oauth(provider, subject):
     conn = _conn()
     c    = conn.cursor()
     c.execute(
-        """SELECT id, username, email, phone, password_hash, oauth_provider, oauth_subject
-           FROM users WHERE oauth_provider = ? AND oauth_subject = ?""",
+        "SELECT id, username, email, phone, password_hash, oauth_provider, oauth_subject "
+        "FROM users WHERE oauth_provider = ? AND oauth_subject = ?",
         (provider, subject),
     )
     row = c.fetchone()
@@ -234,8 +253,8 @@ def create_user(username, email, password_hash, phone=None, oauth_provider=None,
     conn = _conn()
     c    = conn.cursor()
     c.execute(
-        """INSERT INTO users (username, email, phone, password_hash, oauth_provider, oauth_subject)
-           VALUES (?, ?, ?, ?, ?, ?)""",
+        "INSERT INTO users (username, email, phone, password_hash, oauth_provider, oauth_subject) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
         (username, email.lower().strip(), phone, password_hash, oauth_provider, oauth_subject),
     )
     conn.commit()
@@ -251,9 +270,9 @@ def upsert_pending_quiz(user_id, pdf_path, original_name):
         """INSERT INTO pending_quiz_context (user_id, stored_pdf_path, original_filename, updated_at)
            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
            ON CONFLICT(user_id) DO UPDATE SET
-             stored_pdf_path = excluded.stored_pdf_path,
+             stored_pdf_path   = excluded.stored_pdf_path,
              original_filename = excluded.original_filename,
-             updated_at = CURRENT_TIMESTAMP""",
+             updated_at        = CURRENT_TIMESTAMP""",
         (user_id, pdf_path, original_name),
     )
     conn.commit()
@@ -275,13 +294,17 @@ def get_pending_quiz(user_id):
 def insert_quiz_report(user_id, meta):
     conn = _conn()
     c    = conn.cursor()
+    # ── Save IST timestamp instead of UTC ─────────────────────────────
+    ist_now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     c.execute(
         """INSERT INTO quiz_reports (
-             user_id, pdf_original_name, stored_pdf_path, score, total_questions,
-             percentage, grade_title, grade_message, wrong_topics_json, answer_detail_json
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+             user_id, created_at, pdf_original_name, stored_pdf_path, score,
+             total_questions, percentage, grade_title, grade_message,
+             wrong_topics_json, answer_detail_json
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             user_id,
+            ist_now,
             meta.get("pdf_original_name"),
             meta.get("stored_pdf_path"),
             meta["score"],
@@ -303,14 +326,20 @@ def list_quiz_reports(user_id, limit=50):
     conn = _conn()
     c    = conn.cursor()
     c.execute(
-        """SELECT id, created_at, pdf_original_name, score, total_questions, percentage,
-                  grade_title
+        """SELECT id, created_at, pdf_original_name, score, total_questions,
+                  percentage, grade_title
            FROM quiz_reports WHERE user_id = ? ORDER BY id DESC LIMIT ?""",
         (user_id, limit),
     )
     rows = c.fetchall()
     conn.close()
-    return rows
+    # ── Convert each created_at to IST formatted string ───────────────
+    formatted = []
+    for row in rows:
+        row = list(row)
+        row[1] = format_ist(row[1])
+        formatted.append(tuple(row))
+    return formatted
 
 
 def get_quiz_report(report_id, user_id):
@@ -318,14 +347,28 @@ def get_quiz_report(report_id, user_id):
     c    = conn.cursor()
     c.execute(
         """SELECT id, user_id, created_at, pdf_original_name, stored_pdf_path, score,
-                  total_questions, percentage, grade_title, grade_message, wrong_topics_json,
-                  answer_detail_json
+                  total_questions, percentage, grade_title, grade_message,
+                  wrong_topics_json, answer_detail_json
            FROM quiz_reports WHERE id = ? AND user_id = ?""",
         (report_id, user_id),
     )
     row = c.fetchone()
     conn.close()
     return row
+
+
+def delete_quiz_report(report_id, user_id):
+    """Delete a report — only if it belongs to this user."""
+    conn = _conn()
+    c    = conn.cursor()
+    c.execute(
+        "DELETE FROM quiz_reports WHERE id = ? AND user_id = ?",
+        (report_id, user_id),
+    )
+    conn.commit()
+    deleted = c.rowcount > 0
+    conn.close()
+    return deleted
 
 
 init_db()
@@ -342,9 +385,9 @@ def load_user(user_id):
 def oauth_flags():
     return {
         "google_oauth_enabled": bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET),
-        "apple_oauth_enabled": bool(
-            APPLE_CLIENT_ID and APPLE_TEAM_ID and APPLE_KEY_ID and APPLE_PRIVATE_KEY_PATH
-            and os.path.isfile(APPLE_PRIVATE_KEY_PATH)
+        "apple_oauth_enabled":  bool(
+            APPLE_CLIENT_ID and APPLE_TEAM_ID and APPLE_KEY_ID
+            and APPLE_PRIVATE_KEY_PATH and os.path.isfile(APPLE_PRIVATE_KEY_PATH)
         ),
     }
 
@@ -377,7 +420,7 @@ def apple_client_secret_jwt():
             key = f.read()
     except OSError:
         return None
-    now = int(time.time())
+    now     = int(time.time())
     headers = {"kid": APPLE_KEY_ID, "alg": "ES256"}
     payload = {
         "iss": APPLE_TEAM_ID,
@@ -408,12 +451,12 @@ def find_or_create_oauth_user(provider, subject, email_hint, display_name):
             conn.close()
             return User(existing[0], existing[1], existing[2])
     safe_sub = re.sub(r"[^a-zA-Z0-9._+-]", "_", str(subject))[:56]
-    email = (email_hint or f"{provider}_{safe_sub}@oauth.financeiq.local").lower().strip()
+    email    = (email_hint or f"{provider}_{safe_sub}@oauth.financeiq.local").lower().strip()
     if get_user_by_email(email) and not email_hint:
         email = f"{provider}_{safe_sub}_{secrets.token_hex(4)}@oauth.financeiq.local"
-    uname = (display_name or email.split("@")[0]).strip()[:80] or "Learner"
+    uname      = (display_name or email.split("@")[0]).strip()[:80] or "Learner"
     dummy_hash = generate_password_hash(secrets.token_urlsafe(32))
-    uid = create_user(uname, email, dummy_hash, phone=None, oauth_provider=provider, oauth_subject=subject)
+    uid        = create_user(uname, email, dummy_hash, phone=None, oauth_provider=provider, oauth_subject=subject)
     return User(uid, uname, email)
 
 
@@ -429,11 +472,12 @@ def resolve_login_row(login_id):
     return get_user_by_username(login_id)
 
 
-def pdf_safe_text(text, max_len=2000):
+def pdf_safe_text(text, max_len=5000):
     if text is None:
         return ""
-    s = str(text).replace("\r", " ").replace("\n", " ")
-    return s.encode("latin-1", "replace").decode("latin-1")[:max_len]
+    s = str(text).strip().replace("\r\n", "\n").replace("\r", "\n")
+    encoded = s.encode("latin-1", "replace").decode("latin-1")
+    return encoded[:max_len]
 
 
 class _ReportPdf(FPDF):
@@ -445,72 +489,162 @@ class _ReportPdf(FPDF):
 
 
 def build_quiz_result_pdf(report_row):
-    """report_row: tuple from get_quiz_report (full row)."""
     (
-        _rid,
-        _uid,
-        created_at,
-        pdf_original_name,
-        _stored,
-        score,
-        total_questions,
-        percentage,
-        grade_title,
-        grade_message,
-        wrong_topics_json,
-        answer_detail_json,
+        _rid, _uid, created_at, pdf_original_name, _stored,
+        score, total_questions, percentage, grade_title, grade_message,
+        wrong_topics_json, answer_detail_json,
     ) = report_row
+
     wrong_topics = json.loads(wrong_topics_json or "[]")
     details      = json.loads(answer_detail_json or "[]")
 
+    display_date = format_ist(created_at) if created_at else now_ist()
+
     pdf = _ReportPdf()
-    pdf.set_auto_page_break(auto=True, margin=14)
+    pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
+
+    # Usable width
+    W = pdf.w - pdf.l_margin - pdf.r_margin  # ~170mm on A4
+
+    # ── Header ────────────────────────────────────────────────────────
+    pdf.set_fill_color(29, 78, 216)
+    pdf.rect(0, 0, pdf.w, 28, "F")
+    pdf.set_xy(pdf.l_margin, 7)
     pdf.set_font("Helvetica", "B", 18)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(W, 10, "FinanceIQ Quiz Report", ln=True)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_x(pdf.l_margin)
+    pdf.cell(W, 6, f"Generated: {display_date} IST", ln=True)
+    pdf.ln(10)
+
+    # ── Meta info ─────────────────────────────────────────────────────
     pdf.set_text_color(10, 22, 40)
-    pdf.cell(0, 10, "FinanceIQ Quiz Report", ln=True)
-    pdf.set_font("Helvetica", "", 10)
-    pdf.set_text_color(60, 60, 60)
-    pdf.cell(0, 6, f"Date: {created_at}", ln=True)
     if pdf_original_name:
-        pdf.cell(0, 6, f"Source document: {pdf_safe_text(pdf_original_name, 120)}", ln=True)
-    pdf.ln(4)
-    pdf.set_font("Helvetica", "B", 12)
+        pdf.set_font("Helvetica", "", 10)
+        pdf.set_text_color(80, 80, 80)
+        pdf.cell(W, 6, f"Source document: {pdf_safe_text(pdf_original_name)}", ln=True)
+        pdf.ln(2)
+
+    # ── Score box ─────────────────────────────────────────────────────
+    pdf.set_fill_color(239, 246, 255)
+    pdf.set_draw_color(29, 78, 216)
+    box_y = pdf.get_y()
+    pdf.rect(pdf.l_margin, box_y, W, 22, "FD")
+    pdf.set_xy(pdf.l_margin + 4, box_y + 3)
+    pdf.set_font("Helvetica", "B", 14)
     pdf.set_text_color(29, 78, 216)
-    pdf.cell(0, 8, f"Score: {score} / {total_questions}  ({percentage}%)", ln=True)
+    pdf.cell(W - 8, 8, f"Score: {score} / {total_questions}  ({percentage}%)", ln=True)
+    pdf.set_x(pdf.l_margin + 4)
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_text_color(10, 22, 40)
-    pdf.multi_cell(0, 6, pdf_safe_text(grade_title or "", 200))
+    pdf.cell(W - 8, 6, pdf_safe_text(grade_title or ""), ln=True)
+    pdf.ln(6)
+
+    # Grade message
     pdf.set_font("Helvetica", "", 10)
     pdf.set_text_color(50, 50, 50)
-    pdf.multi_cell(0, 5, pdf_safe_text(grade_message or "", 500))
-    pdf.ln(3)
+    pdf.multi_cell(W, 5, pdf_safe_text(grade_message or ""))
+    pdf.ln(4)
+
+    # ── Topics to review ──────────────────────────────────────────────
     if wrong_topics:
         pdf.set_font("Helvetica", "B", 11)
-        pdf.cell(0, 6, "Topics to review:", ln=True)
+        pdf.set_text_color(10, 22, 40)
+        pdf.cell(W, 7, "Topics to Review:", ln=True)
         pdf.set_font("Helvetica", "", 10)
+        pdf.set_text_color(60, 60, 60)
         for t in wrong_topics:
-            pdf.multi_cell(0, 5, f"- {pdf_safe_text(t, 200)}")
-        pdf.ln(2)
-    pdf.set_font("Helvetica", "B", 11)
-    pdf.cell(0, 8, "Question summary", ln=True)
-    pdf.set_font("Helvetica", "", 9)
+            pdf.multi_cell(W, 5, f"  - {pdf_safe_text(t)}")
+        pdf.ln(4)
+
+    # ── Divider ───────────────────────────────────────────────────────
+    pdf.set_draw_color(200, 210, 230)
+    pdf.line(pdf.l_margin, pdf.get_y(), pdf.l_margin + W, pdf.get_y())
+    pdf.ln(4)
+
+    # ── Question Summary ──────────────────────────────────────────────
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.set_text_color(10, 22, 40)
+    pdf.cell(W, 8, "Question Summary", ln=True)
+    pdf.ln(2)
+
     for i, d in enumerate(details, 1):
-        if pdf.get_y() > 270:
+        is_correct = d.get("is_correct", False)
+
+        # Page break check — leave room for at least question block
+        if pdf.get_y() > 250:
             pdf.add_page()
-        q  = pdf_safe_text(d.get("question", ""), 400)
-        ok = "Correct" if d.get("is_correct") else "Incorrect"
-        pdf.set_font("Helvetica", "B", 9)
-        pdf.multi_cell(0, 4, f"Q{i} ({ok}) - {pdf_safe_text(d.get('topic', ''), 80)}")
-        pdf.set_font("Helvetica", "", 9)
-        pdf.multi_cell(0, 4, q)
-        pdf.multi_cell(
-            0,
-            4,
-            f"Your answer: {pdf_safe_text(d.get('user_answer', ''), 20)}   "
-            f"Correct: {pdf_safe_text(d.get('correct_answer', ''), 20)}",
-        )
+            pdf.ln(4)
+
+        # ── Question block background ──────────────────────────────
+        if is_correct:
+            pdf.set_fill_color(236, 253, 245)   # light green
+            pdf.set_draw_color(16, 185, 129)
+            status_label = "Correct"
+            status_color = (6, 95, 70)
+        else:
+            pdf.set_fill_color(254, 242, 242)   # light red
+            pdf.set_draw_color(239, 68, 68)
+            status_label = "Incorrect"
+            status_color = (153, 27, 27)
+
+        block_x = pdf.l_margin
+        block_y = pdf.get_y()
+
+        # Draw left accent bar
+        pdf.set_fill_color(*([16, 185, 129] if is_correct else [239, 68, 68]))
+        pdf.rect(block_x, block_y, 3, 6, "F")
+
+        # Q number + status
+        pdf.set_xy(block_x + 5, block_y)
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.set_text_color(*status_color)
+        topic = pdf_safe_text(d.get("topic", "General"), 80)
+        pdf.cell(W - 5, 6, f"Q{i}  [{status_label}]  -  {topic}", ln=True)
+        pdf.ln(1)
+
+        # Question text
+        pdf.set_x(block_x + 5)
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.set_text_color(10, 22, 40)
+        question_text = pdf_safe_text(d.get("question", ""), 2000)
+        pdf.multi_cell(W - 5, 5, question_text)
         pdf.ln(2)
+
+        # Options (A, B, C, D) if available
+        options = d.get("options", {})
+        if options:
+            pdf.set_font("Helvetica", "", 9)
+            pdf.set_text_color(60, 60, 60)
+            for key, val in options.items():
+                pdf.set_x(block_x + 8)
+                pdf.multi_cell(W - 8, 4, f"{key})  {pdf_safe_text(str(val), 300)}")
+            pdf.ln(2)
+
+        # Your answer vs Correct answer
+        pdf.set_x(block_x + 5)
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_text_color(153, 27, 27)
+        user_ans = pdf_safe_text(d.get("user_answer", "—"), 300)
+        pdf.multi_cell(W - 5, 5, f"Your answer:    {user_ans}")
+
+        pdf.set_x(block_x + 5)
+        pdf.set_text_color(6, 95, 70)
+        correct_ans = pdf_safe_text(d.get("correct_answer", "—"), 300)
+        pdf.multi_cell(W - 5, 5, f"Correct answer: {correct_ans}")
+        pdf.ln(2)
+
+        # Explanation
+        explanation = pdf_safe_text(d.get("explanation", ""), 2000)
+        if explanation:
+            pdf.set_x(block_x + 5)
+            pdf.set_font("Helvetica", "I", 9)
+            pdf.set_text_color(80, 80, 80)
+            pdf.multi_cell(W - 5, 5, f"Explanation: {explanation}")
+
+        pdf.ln(5)
 
     return BytesIO(bytes(pdf.output()))
 
@@ -758,12 +892,12 @@ def login_post():
 
 @app.route("/register", methods=["POST"])
 def register_post():
-    username = request.form.get("username", "").strip()
-    email    = request.form.get("email", "").strip()
+    username  = request.form.get("username", "").strip()
+    email     = request.form.get("email", "").strip()
     phone_raw = request.form.get("phone", "").strip()
-    password = request.form.get("password", "").strip()
-    confirm  = request.form.get("confirm_password", "").strip()
-    phone    = normalize_phone(phone_raw)
+    password  = request.form.get("password", "").strip()
+    confirm   = request.form.get("confirm_password", "").strip()
+    phone     = normalize_phone(phone_raw)
 
     if not username or not email or not password:
         return render_template(
@@ -816,12 +950,8 @@ def register_post():
         )
 
     create_user(
-        username,
-        email,
-        generate_password_hash(password),
-        phone=phone,
-        oauth_provider=None,
-        oauth_subject=None,
+        username, email, generate_password_hash(password),
+        phone=phone, oauth_provider=None, oauth_subject=None,
     )
     row  = get_user_by_email(email)
     user = User(row[0], row[1], row[2])
@@ -855,7 +985,7 @@ def auth_google_callback():
     try:
         flow = make_google_flow()
         flow.fetch_token(authorization_response=request.url)
-        creds = flow.credentials
+        creds   = flow.credentials
         id_info = google_id_token.verify_oauth2_token(
             creds.id_token, google_requests.Request(), GOOGLE_CLIENT_ID
         )
@@ -882,19 +1012,17 @@ def auth_apple():
     if not oauth_flags()["apple_oauth_enabled"]:
         flash("Apple sign-in is not configured on this server.")
         return redirect(url_for("login_page"))
-    state = secrets.token_urlsafe(32)
+    state        = secrets.token_urlsafe(32)
     session["apple_oauth_state"] = state
     redirect_uri = url_for("auth_apple_callback", _external=True)
-    qs = urlencode(
-        {
-            "response_type":   "code",
-            "response_mode":   "form_post",
-            "client_id":       APPLE_CLIENT_ID,
-            "redirect_uri":    redirect_uri,
-            "scope":           "name email",
-            "state":           state,
-        }
-    )
+    qs = urlencode({
+        "response_type": "code",
+        "response_mode": "form_post",
+        "client_id":     APPLE_CLIENT_ID,
+        "redirect_uri":  redirect_uri,
+        "scope":         "name email",
+        "state":         state,
+    })
     return redirect(f"https://appleid.apple.com/auth/authorize?{qs}")
 
 
@@ -936,7 +1064,7 @@ def auth_apple_callback():
     try:
         jwks_client = PyJWKClient("https://appleid.apple.com/auth/keys")
         signing_key = jwks_client.get_signing_key_from_jwt(id_token)
-        payload = jwt.decode(
+        payload     = jwt.decode(
             id_token,
             signing_key.key,
             algorithms=["RS256"],
@@ -953,7 +1081,7 @@ def auth_apple_callback():
     user_field = request.form.get("user")
     if user_field:
         try:
-            uj = json.loads(user_field)
+            uj   = json.loads(user_field)
             name = (uj.get("name") or {}).get("firstName") or name
         except json.JSONDecodeError:
             pass
@@ -994,7 +1122,7 @@ def download_report_pdf(report_id):
     if not row:
         flash("Report not found.")
         return redirect(url_for("dashboard"))
-    buf = build_quiz_result_pdf(row)
+    buf   = build_quiz_result_pdf(row)
     fname = f"financeiq-report-{report_id}.pdf"
     return send_file(
         buf,
@@ -1002,6 +1130,16 @@ def download_report_pdf(report_id):
         as_attachment=True,
         download_name=fname,
     )
+
+
+# ── NEW: Delete Report ─────────────────────────────────────────────────────
+@app.route("/reports/<int:report_id>/delete", methods=["POST"])
+@login_required
+def delete_report(report_id):
+    deleted = delete_quiz_report(report_id, current_user.id)
+    if not deleted:
+        flash("Report not found or already deleted.")
+    return redirect(url_for("dashboard"))
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -1181,8 +1319,8 @@ def get_result():
 @app.route("/api/reports/save", methods=["POST"])
 @login_required
 def save_quiz_report():
-    data = request.json or {}
-    pending = get_pending_quiz(current_user.id)
+    data        = request.json or {}
+    pending     = get_pending_quiz(current_user.id)
     stored_path = pending[0] if pending else None
     orig_name   = pending[1] if pending else data.get("pdf_filename")
 
@@ -1191,7 +1329,7 @@ def save_quiz_report():
             current_user.id,
             {
                 "pdf_original_name": orig_name or "report.pdf",
-                "stored_pdf_path": stored_path,
+                "stored_pdf_path":   stored_path,
                 "score":             int(data.get("score", 0)),
                 "total_questions":   int(data.get("total", 0)),
                 "percentage":        float(data.get("percentage", 0)),
@@ -1208,6 +1346,5 @@ def save_quiz_report():
 
 
 if __name__ == "__main__":
-    # Google OAuth against http://127.0.0.1:5000 requires this in development.
     os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
-    app.run(debug=True, port=5000)
+    app.run(debug=True, port=5000, use_reloader=False)

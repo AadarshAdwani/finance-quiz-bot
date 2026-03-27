@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>FinanceIQ — Dashboard</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"/>
-  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@300;400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet"/>
 </head>
 <body>
 
@@ -105,6 +105,11 @@
               <td>{{ r[6] or '—' }}</td>
               <td class="dr-actions">
                 <a class="btn-report-pdf" href="{{ url_for('download_report_pdf', report_id=r[0]) }}">Download PDF</a>
+                <form method="POST" action="{{ url_for('delete_report', report_id=r[0]) }}"
+                      onsubmit="return confirm('Delete this report? This cannot be undone.');"
+                      style="display:inline;">
+                  <button type="submit" class="btn-report-delete">Delete</button>
+                </form>
               </td>
             </tr>
             {% endfor %}

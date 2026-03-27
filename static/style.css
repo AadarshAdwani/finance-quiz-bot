@@ -539,9 +539,30 @@ body.auth-body {
   border-radius: 8px;
   text-decoration: none;
   border: 1px solid rgba(29,78,216,.2);
+  transition: all .2s;
 }
 .btn-report-pdf:hover {
   background: rgba(29,78,216,.12);
+}
+
+/* ── Delete Report Button ──────────────────────────────────────────────── */
+.btn-report-delete {
+  display: inline-block;
+  padding: 8px 14px;
+  background: rgba(239,68,68,.08);
+  color: var(--red);
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 600;
+  font-size: 13px;
+  border-radius: 8px;
+  border: 1px solid rgba(239,68,68,.2);
+  cursor: pointer;
+  margin-left: 8px;
+  transition: all .2s;
+}
+.btn-report-delete:hover {
+  background: rgba(239,68,68,.15);
+  border-color: var(--red);
 }
 
 /* Quiz Card */
@@ -958,7 +979,7 @@ body.auth-body {
   margin-bottom: 16px;
 }
 .question-text {
-  font-family: 'Playfair Display', serif;
+  font-family: 'Inter', 'DM Sans', sans-serif;
   font-size: 21px;
   font-weight: 600;
   line-height: 1.45;
