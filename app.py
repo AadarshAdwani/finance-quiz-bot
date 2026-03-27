@@ -700,6 +700,9 @@ def store_in_chromadb(chunks):
             ids        = [f"chunk_{i}" for i in range(len(chunks))],
         )
         return collection
+    except Exception as e:
+        print(f"ChromaDB skipped (not available): {e}")
+        return None
 
 def get_context(query, collection, n_results=2):
     embedding = embedding_model.encode([query]).tolist()
