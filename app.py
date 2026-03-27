@@ -679,26 +679,27 @@ def chunk_text(text, chunk_size=300, overlap=50):
 
 def store_in_chromadb(chunks):
     global chroma_client, embedding_model
-    import chromadb
-    from sentence_transformers import SentenceTransformer
-    if embedding_model is None:
-        embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-    if chroma_client is None:
-        chroma_client = chromadb.PersistentClient(path="./chroma_db")
-    embeddings = embedding_model.encode(chunks).tolist()
-    existing   = [c.name for c in chroma_client.list_collections()]
-    if "investment_report" in existing:
-        chroma_client.delete_collection("investment_report")
-    collection = chroma_client.get_or_create_collection(
-        name="investment_report",
-        metadata={"hnsw:space": "cosine"},
-    )
-    collection.add(
-        documents  = chunks,
-        embeddings = embeddings,
-        ids        = [f"chunk_{i}" for i in range(len(chunks))],
-    )
-    return collection
+    try:
+        import chromadb
+        from sentence_transformers import SentenceTransformer
+        if embedding_model is None:
+            embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+        if chroma_client is None:
+            chroma_client = chromadb.PersistentClient(path="./chroma_db")
+        embeddings = embedding_model.encode(chunks).tolist()
+        existing   = [c.name for c in chroma_client.list_collections()]
+        if "investment_report" in existing:
+            chroma_client.delete_collection("investment_report")
+        collection = chroma_client.get_or_create_collection(
+            name="investment_report",
+            metadata={"hnsw:space": "cosine"},
+        )
+        collection.add(
+            documents  = chunks,
+            embeddings = embeddings,
+            ids        = [f"chunk_{i}" for i in range(len(chunks))],
+        )
+        return collection
 
 def get_context(query, collection, n_results=2):
     embedding = embedding_model.encode([query]).tolist()
@@ -1222,9 +1223,12 @@ def upload_pdf():
 
         print(f"Finance validation passed! ({percent})")
 
-        print("Storing in ChromaDB...")
         chunks = chunk_text(text)
-        store_in_chromadb(chunks)
+try:
+    print("Storing in ChromaDB...")
+    store_in_chromadb(chunks)
+except Exception as e:
+    print(f"ChromaDB skipped: {e}")
 
         upsert_pending_quiz(current_user.id, filepath, file.filename)
 
