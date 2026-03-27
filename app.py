@@ -6,8 +6,6 @@ from flask_cors import CORS
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
-from sentence_transformers import SentenceTransformer
-import chromadb
 from groq import Groq
 import os
 import fitz
@@ -651,8 +649,8 @@ def build_quiz_result_pdf(report_row):
 
 # ── Load AI Resources ──────────────────────────────────────────────────────
 print("Loading resources...")
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-chroma_client   = chromadb.PersistentClient(path="./chroma_db")
+embedding_model = None
+chroma_client = None
 groq_client     = Groq(api_key=os.getenv("GROQ_API_KEY"))
 print("Resources loaded!")
 
@@ -680,6 +678,13 @@ def chunk_text(text, chunk_size=300, overlap=50):
 
 
 def store_in_chromadb(chunks):
+    global chroma_client, embedding_model
+    import chromadb
+    from sentence_transformers import SentenceTransformer
+    if embedding_model is None:
+        embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+    if chroma_client is None:
+        chroma_client = chromadb.PersistentClient(path="./chroma_db")
     embeddings = embedding_model.encode(chunks).tolist()
     existing   = [c.name for c in chroma_client.list_collections()]
     if "investment_report" in existing:
@@ -694,7 +699,6 @@ def store_in_chromadb(chunks):
         ids        = [f"chunk_{i}" for i in range(len(chunks))],
     )
     return collection
-
 
 def get_context(query, collection, n_results=2):
     embedding = embedding_model.encode([query]).tolist()
